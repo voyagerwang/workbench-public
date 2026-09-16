@@ -79,7 +79,7 @@ export function AppShell() {
       <aside className="fixed inset-y-0 left-0 z-30 hidden w-56 flex-col border-r border-line bg-chrome backdrop-blur-md md:flex">
         <div className="flex items-center gap-2.5 px-5 pb-6 pt-6">
           {appAvatar ? (
-            <img src={appAvatar} alt="logo" className="size-9 rounded-xl border border-line object-cover" />
+            <img src={appAvatar} alt="logo" className="size-9 rounded-xl object-cover" />
           ) : (
             <div className="flex size-9 items-center justify-center rounded-xl border border-accent/25 bg-accent-dim text-lg font-semibold neon-text">
               {appName.slice(0, 2).toUpperCase()}
@@ -169,7 +169,7 @@ export function AppShell() {
       <header className="sticky top-0 z-30 flex shrink-0 items-center justify-between border-b border-line bg-chrome px-4 py-3 backdrop-blur-md md:hidden">
         <div className="flex items-center gap-2">
           {appAvatar ? (
-            <img src={appAvatar} alt="logo" className="size-7 rounded-lg border border-line object-cover" />
+            <img src={appAvatar} alt="logo" className="size-7 rounded-lg object-cover" />
           ) : (
             <div className="flex size-7 items-center justify-center rounded-lg border border-accent/25 bg-accent-dim neon-text text-[10px] font-semibold">{appName.slice(0, 2).toUpperCase()}</div>
           )}
