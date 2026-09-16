@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      html, body { width: 100%; height: 100%; margin: 0; }
+      html, body {
+        overflow: visible;
+        background: transparent !important;
+        background-color: transparent !important;
+        color: transparent;
+      }
+      body { position: relative; }
+      /*
+       * The iframe is intentionally larger than the visible character. Keep the
+       * ball in the host-sized area and reserve transparent room above/right for
+       * head movement and zzz particles, so no hard rectangular crop appears.
+       */
+      #ball {
+        cursor: pointer;
+        position: absolute;
+        left: 14.493%;
+        top: 19.444%;
+        width: 43.478%;
+        height: 41.667%;
+        z-index: 0;
+      }
+      /* 睡眠态：变暗、褪色，外加缓慢的呼吸起伏，一眼能看出是在睡而不是放空 */
+      #ball svg { transition: filter 0.6s ease, opacity 0.6s ease; }
+      body.is-sleeping #ball svg, body.is-sleeping #ball canvas {
+        filter: brightness(0.58) saturate(0.45);
+        opacity: 0.72;
+        animation: sleep-breath 4s ease-in-out infinite;
+      }
+      @keyframes sleep-breath {
+        0%, 100% { transform: scale(1); }
+        50% { transform: scale(0.92); }
+      }
+      /* 醒来的那一刻：弹一下 */
+      #ball.is-wake { animation: wake-pop 0.55s cubic-bezier(0.34, 1.56, 0.64, 1); transform-origin: 50% 80%; }
+      @keyframes wake-pop {
+        0% { transform: scale(0.78); }
+        55% { transform: scale(1.14); }
+        100% { transform: scale(1); }
+      }
+      /* 睡梦中的 z z z */
+      #sleep-layer {
+        position: absolute; inset: 0; pointer-events: none; z-index: 1;
+        opacity: 0; transition: opacity 0.9s ease;
+      }
+      body.is-sleeping #sleep-layer { opacity: 1; }
+      .zzz {
+        position: absolute; left: 48%; top: 13%;
+        font-family: ui-rounded, system-ui, sans-serif; font-weight: 800;
+        color: rgba(55, 65, 81, 0.95); text-shadow: 0 1px 2px rgba(255, 255, 255, 0.8);
+      }
+      .zzz span { display: inline-block; animation: zzz-float 2.6s ease-in-out infinite; }
+      .zzz span:nth-child(2) { animation-delay: 0.45s; }
+      .zzz span:nth-child(3) { animation-delay: 0.9s; }
+      @keyframes zzz-float {
+        0% { transform: translate(0, 0); opacity: 0; }
+        25% { opacity: 0.95; }
+        60% { opacity: 0.95; }
+        100% { transform: translate(7px, -13px); opacity: 0; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .zzz span { animation: none; opacity: 0.85; }
+        body.is-sleeping #ball canvas { animation: none; }
+        #ball.is-wake { animation: none; }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="ball" aria-label="AI 表情小球"></div>
+    <div id="sleep-layer" aria-hidden="true"><div class="zzz"><span>z</span><span>z</span><span>z</span></div></div>
+    <script src="/mood-mates/src/core/geometry.js"></script>
+    <script src="/mood-mates/src/core/render.js"></script>
+    <script src="/mood-mates/src/core/features.js"></script>
+    <script src="/mood-mates/src/core/fx.js"></script>
+    <script src="/mood-mates/src/data/emotions.js"></script>
+    <script src="/mood-mates/src/core/engine.js"></script>
+    <script src="/mood-mates/src/characters/nimbo.js"></script>
+    <script src="/mood-mates/src/characters/twinkle.js"></script>
+    <script src="/emotion-ball/js/rings.js"></script>
+    <script src="/emotion-ball/js/emotions.js"></script>
+    <script src="/emotion-ball/js/ball.js"></script>
+    <script src="/emotion-ball/js/engine.js"></script>
+    <script>
+      (function () {
+        var root = document.getElementById('ball');
+        var reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        var params = new URLSearchParams(window.location.search);
+        var hostMatch = window.name.match(/^yz-mood-orb-frame-(live|static)-([^-]+)-/);
+        var allowedCharacters = ['ball', 'nimbo', 'twinkle'];
+        var initialCharacter = params.get('character') || (hostMatch && hostMatch[2]);
+        var currentEmotion = '02';
+        var currentCharacter = allowedCharacters.indexOf(initialCharacter) >= 0 ? initialCharacter : 'ball';
+        var staticMode = params.get('static') === '1' || Boolean(hostMatch && hostMatch[1] === 'static');
+        var quiet = false;
+        var gaze = null;
+        var engine;
+
+        /* ---- 身体跟随：光标在哪，整个身子就朝哪探一点 + 歪头一点。
+             引擎自带的 setGaze 只动眼睛，幅度藏在 40px 的脸盘里几乎看不见。---- */
+        var followCur = { x: 0, y: 0 };
+        var followTgt = { x: 0, y: 0 };
+        var followRaf = null;
+
+        function applyFollow() {
+          var svg = root.querySelector('svg');
+          if (!svg) return;
+          var size = root.clientWidth || 48;
+          svg.style.transformOrigin = '50% 82%';
+          svg.style.transform = 'translate(' + (followCur.x * size * 0.075).toFixed(2) + 'px,' +
+            (followCur.y * size * 0.055).toFixed(2) + 'px) rotate(' + (followCur.x * 3).toFixed(2) + 'deg)';
+        }
+        function followLoop() {
+          followRaf = null;
+          followCur.x += (followTgt.x - followCur.x) * 0.18;
+          followCur.y += (followTgt.y - followCur.y) * 0.18;
+          applyFollow();
+          if (Math.abs(followTgt.x - followCur.x) > 0.002 || Math.abs(followTgt.y - followCur.y) > 0.002) {
+            followRaf = requestAnimationFrame(followLoop);
+          }
+        }
+        function kickFollow() {
+          if (staticMode || reduced) return;
+          if (!followRaf) followRaf = requestAnimationFrame(followLoop);
+        }
+        function setFollowTarget(x, y) {
+          if (currentCharacter === 'yoona') return;
+          followTgt.x = x; followTgt.y = y; kickFollow();
+        }
+        function resetFollow() { setFollowTarget(0, 0); }
+
+        function createEngine() {
+          document.body.dataset.character = currentCharacter;
+          if (engine) engine.destroy();
+          var opts = {
+            emotion: currentEmotion,
+            autostart: !reduced && !staticMode,
+            lite: staticMode,
+            idle: false,
+            label: 'AI 表情小球'
+          };
+          if (currentCharacter === 'ball') {
+            engine = window.EmotionBall.create(root, opts);
+          } else {
+            opts.character = currentCharacter;
+            opts.eyeScale = 1.35;
+            engine = window.MoodMates.create(root, opts);
+          }
+          window.__eb = engine; // 调试/测试用
+          syncZzzSize();
+          if (quiet || staticMode) {
+            engine.setActive(false);
+            engine.renderStatic();
+          }
+          if (gaze) engine.setGaze(gaze.x, gaze.y);
+        }
+
+        /* z z z 的字号随容器缩放（头部 40px / 设置页预览更大） */
+        function syncZzzSize() {
+          var zzz = document.querySelector('.zzz');
+          if (zzz) zzz.style.fontSize = Math.max(11, (root.clientWidth || 48) * 0.34).toFixed(1) + 'px';
+        }
+        window.addEventListener('resize', syncZzzSize);
+
+        /* 睡眠外观开关：换表情时顺带切换。从睡着被叫醒的那一下弹一弹。 */
+        function applyEmotion(id) {
+          var wasSleeping = currentEmotion === '00';
+          currentEmotion = id;
+          engine.setEmotion(id);
+          var sleeping = id === '00';
+          document.body.classList.toggle('is-sleeping', sleeping);
+          if (wasSleeping && !sleeping && !staticMode && !reduced && currentCharacter !== 'yoona') {
+            root.classList.remove('is-wake');
+            void root.offsetWidth; // 重置动画
+            root.classList.add('is-wake');
+          }
+        }
+
+        createEngine();
+
+        function poke() {
+          if (typeof engine.celebrate === 'function') engine.celebrate(1);
+          else {
+            /* 自旋会逐帧重建整套 SVG 路径；小球点击反馈用弹跳即可保持轻快。 */
+            engine.bounce();
+          }
+        }
+
+        root.addEventListener('pointermove', function (event) {
+          var rect = root.getBoundingClientRect();
+          var nx = (event.clientX - (rect.left + rect.width / 2)) / Math.max(rect.width / 2, 1);
+          var ny = (event.clientY - (rect.top + rect.height / 2)) / Math.max(rect.height / 2, 1);
+          engine.setGaze(nx, ny);
+          setFollowTarget(nx, ny);
+        }, { passive: true });
+        root.addEventListener('pointerleave', function () { engine.clearGaze(); resetFollow(); });
+        root.addEventListener('click', function () {
+          poke();
+          window.parent.postMessage({ type: 'emotion-ball-clicked' }, '*');
+        });
+
+        window.addEventListener('message', function (event) {
+          var data = event.data || {};
+          if (data.type === 'emotion' && typeof data.id === 'string') {
+            applyEmotion(data.id);
+          }
+          if (data.type === 'character' && allowedCharacters.indexOf(data.value) >= 0 && data.value !== currentCharacter) {
+            currentCharacter = data.value;
+            createEngine();
+          }
+          if (data.type === 'hover' && currentCharacter === 'yoona' && engine.setHover) engine.setHover(Boolean(data.value));
+          if (data.type === 'poke') poke();
+          if (data.type === 'gaze' && Number.isFinite(data.x) && Number.isFinite(data.y)) {
+            gaze = { x: data.x, y: data.y };
+            engine.setGaze(data.x, data.y);
+            setFollowTarget(data.x, data.y);
+          }
+          if (data.type === 'gaze-clear') {
+            gaze = null;
+            engine.clearGaze();
+            resetFollow();
+          }
+          if (data.type === 'quiet') {
+            quiet = Boolean(data.value);
+            engine.setActive(!quiet && !reduced && !staticMode);
+            if (quiet || reduced || staticMode) engine.renderStatic();
+          }
+        });
+
+        window.parent.postMessage({ type: 'emotion-ball-ready' }, '*');
+      }());
+    </script>
+  </body>
+</html>
