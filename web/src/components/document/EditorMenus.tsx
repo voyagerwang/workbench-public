@@ -7,6 +7,7 @@
 import { type CSSProperties, type KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { BubbleMenu, type Editor } from '@tiptap/react';
+import { CellSelection } from '@tiptap/pm/tables';
 import { Bold, Code, Italic, Strikethrough } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { insertDefaultTable } from './DocumentTable';
@@ -99,11 +100,11 @@ export function EditorMenus({ editor, anchor, onClose, onImportFile, onInsertRem
     { name: '行内代码', mark: 'code', icon: Code, run: () => editor.chain().focus().toggleCode().run() },
   ];
   return <>
-    <BubbleMenu editor={editor} tippyOptions={{ duration: 100, zIndex: 90 }} shouldShow={({ editor: current, from, to }) => current.isEditable && from !== to && !current.isActive('image') && !current.isActive('attachment')}>
-      <div role="toolbar" aria-label="文字格式" className="flex rounded-lg border border-line bg-chrome p-1 shadow-lg">
+    <BubbleMenu editor={editor} tippyOptions={{ duration: 100, zIndex: 90, placement: 'bottom' }} shouldShow={({ editor: current, from, to }) => current.isEditable && from !== to && !(current.state.selection instanceof CellSelection) && !current.isActive('image') && !current.isActive('attachment')}>
+      <div data-editor-toolbar role="toolbar" aria-label="文字格式" className="flex max-w-[calc(100vw-24px)] flex-wrap rounded-lg border border-line bg-surface-1 p-1 shadow-lg">
         {formats.map(({ name, mark, icon: Icon, run }) => <button key={mark} title={name} aria-label={name} aria-pressed={editor.isActive(mark)}
           onMouseDown={(event) => event.preventDefault()} onClick={run}
-          className={cn('rounded p-1.5 hover:bg-surface-2', editor.isActive(mark) && 'text-accent')}><Icon className="size-4" /></button>)}
+          className={cn('flex items-center gap-1 rounded px-2 py-1.5 text-sm hover:bg-surface-2', editor.isActive(mark) && 'text-accent')}><Icon className="size-4" /><span>{name}</span></button>)}
       </div>
     </BubbleMenu>
     {anchor && createPortal(<div data-editor-menu role="menu" aria-label="插入内容" className="pop-panel fixed z-[90] w-56 rounded-lg border border-line bg-chrome p-1 shadow-xl"

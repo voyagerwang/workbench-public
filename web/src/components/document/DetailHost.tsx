@@ -30,7 +30,7 @@ export function DetailHost({ mode, expanded, children, onClose }: {
     const focused = document.activeElement as HTMLElement | null;
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== 'Escape' || event.isComposing || event.defaultPrevented) return;
-      if (document.querySelector('[role="menu"], [role="listbox"], [data-editor-menu], [role="dialog"]')) return;
+      if (document.querySelector('[role="menu"], [role="listbox"], [data-editor-menu], [data-table-controls], [role="dialog"]')) return;
       event.preventDefault(); latestClose.current();
     };
     document.addEventListener('keydown', onKey);
@@ -50,7 +50,7 @@ export function DetailHost({ mode, expanded, children, onClose }: {
       if (!target) return;
       // 有模态框开着（提醒面板、确认框）时不判「外部」：点它的遮罩是关它，不该顺带把详情也关了
       if (document.querySelector('[role="dialog"]')) return;
-      if (target.closest('[data-datetime-picker-panel], .pop-panel, [data-detail-opener]')) return;
+      if (target.closest('[data-datetime-picker-panel], .pop-panel, [data-detail-opener], [data-table-controls], [data-editor-toolbar]')) return;
       if (section.current?.contains(target)) return;
       latestClose.current();
     };
