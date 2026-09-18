@@ -6,7 +6,7 @@
  */
 import {dirname} from 'node:path';
 import {realpathSync} from 'node:fs';
-import {createAgentExecutionRuntime} from './agent-execution.js';
+import {createAgentExecutionRuntime,taskSandbox} from './agent-execution.js';
 import {createReviewQueue,type Scope} from './agent-review-queue.js';
 import {createReviewHandoff} from './agent-review-handoff.js';
 import {createDeferredReviewRuntime} from './agent-review-runtime.js';
@@ -19,7 +19,7 @@ import {executionSnapshot} from './execution-snapshot.js';
 import {providerSessionRegistry} from './agent-provider-session.js';
 import type {CodexSessionOption} from './codex-cli-adapter.js';
 type Base=Parameters<typeof createAgentExecutionRuntime>[0];
-export function createStageARuntime(config:Omit<Base,'handoffReview'|'canResumeReview'> & {scope:Scope;boundProjectPath?:string;stageAEnabled?:()=>boolean;reviewEvidencePaths?:readonly string[];revisionSource?:{source:string;conversationId:string};nativeSessionAdapter?:(model:string,session:CodexSessionOption)=>ReturnType<Base['adapter']>}){
+export function createStageARuntime(config:Omit<Base,'handoffReview'|'canResumeReview'> & {scope:Scope;boundProjectPath?:string;stageAEnabled?:()=>boolean;reviewEvidencePaths?:readonly string[];revisionSource?:{source:string;conversationId:string};nativeSessionAdapter?:(model:string,session:CodexSessionOption,task?:Readonly<import('./execution-snapshot.js').ExecutionSnapshot>)=>ReturnType<Base['adapter']>}){
  let stopped=false,busy=false;
  const scope=Object.freeze({...config.scope});
  const evidencePaths=config.reviewEvidencePaths?[...config.reviewEvidencePaths]:undefined;
@@ -42,7 +42,7 @@ export function createStageARuntime(config:Omit<Base,'handoffReview'|'canResumeR
    const p=gate(),root=realpathSync(task.project_path),attempt=task.attempt??1;
    const registry=providerSessionRegistry({db:config.db,scope,projectRoot:root,accountScope:p.accountScope,provider:'codex-cli',role:'execution'});
    const option:CodexSessionOption=attempt===1?{mode:'create',projectRoot:root}:{mode:'resume',projectRoot:root,id:registry.previous(task.id,attempt).session_id};
-   const adapter=config.nativeSessionAdapter(model,option);
+   const adapter=config.nativeSessionAdapter(model,option,task);
    if(!adapter.capabilities.resume)throw new Error('执行器未支持原生续接');
    const binding={account:p.accountScope,root,attempt,record:registry.record,id:option.mode==='resume'?option.id:undefined};
    sessions.set(task.id,binding);
@@ -79,7 +79,7 @@ export function createStageARuntime(config:Omit<Base,'handoffReview'|'canResumeR
       const monitor=setInterval(()=>{if(!enabled())handle.interrupt();},250);
       return {...handle,completion:handle.completion.finally(()=>{clearInterval(monitor);reviewInterrupts.delete(handle.interrupt);})};
      }};
-     return executorReviewer({adapter,model,projectRoot:root,executionEvidence:()=>({sandbox:'read-only',executionReachedPendingReview:true,events:(config.db.prepare("SELECT kind,detail FROM agent_execution_events WHERE task_id=? AND kind IN ('execution','execution_result') ORDER BY id").all(input.taskId) as {kind:string;detail:string}[]).map(row=>({kind:row.kind,...JSON.parse(row.detail)})).filter(row=>(row.attempt??1)===(input.task.attempt??1))}),collectEvidence:evidencePaths?evidenceCollector({projectRoot:root,paths:evidencePaths}):undefined,onEvidence:(phase,evidence)=>{
+     return executorReviewer({adapter,model,projectRoot:root,executionEvidence:()=>({sandbox:taskSandbox({task_type:String(input.task.task_type)},current),executionReachedPendingReview:true,events:(config.db.prepare("SELECT kind,detail FROM agent_execution_events WHERE task_id=? AND kind IN ('execution','execution_result') ORDER BY id").all(input.taskId) as {kind:string;detail:string}[]).map(row=>({kind:row.kind,...JSON.parse(row.detail)})).filter(row=>(row.attempt??1)===(input.task.attempt??1))}),collectEvidence:evidencePaths?evidenceCollector({projectRoot:root,paths:evidencePaths}):undefined,onEvidence:(phase,evidence)=>{
       const claim=input.reviewClaim;if(!claim)throw new Error('缺少证据审计绑定');
       const entry=queue.getQueueEntry(claim.id);
       if(!entry||entry.task_id!==input.taskId||entry.claim_token!==claim.token||entry.status!=='claimed')throw new Error('证据审计领取已失效');

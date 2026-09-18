@@ -1,6 +1,6 @@
 /**
  * [INPUT]: schema.sql、既有 SQLite 数据与 DATA_DIR
- * [OUTPUT]: 数据库连接、模型费用约束等追加字段的幂等迁移与设置读写
+ * [OUTPUT]: 数据库连接、通知多选兼容及追加字段的幂等迁移与设置读写
  * [POS]: 本地数据唯一启动边界；助手新增字段仅追加，不派发历史任务
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -362,6 +362,30 @@ relaxRepeatRuleCheck('tasks', [
 relaxRepeatRuleCheck('reminders', [
   'CREATE INDEX IF NOT EXISTS idx_reminders_due ON reminders(status, trigger_at)',
 ]);
+
+// 渠道由 API 共用校验器约束；旧枚举 CHECK 无法容纳微信及多选组合。
+// 只移除渠道约束，保留原 DDL、所有列、索引和触发器，事务失败不会丢失旧表。
+{
+  const original = (db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='reminders'").get() as { sql: string }).sql;
+  const relaxed = original.replace(/CHECK\s*\(\s*channel\s+IN\s*\([^)]*\)\s*\)/i, '');
+  if (relaxed !== original) {
+    const objects = db.prepare("SELECT sql FROM sqlite_master WHERE tbl_name='reminders' AND type IN ('index','trigger') AND sql IS NOT NULL").all() as { sql: string }[];
+    const foreignKeys = db.pragma('foreign_keys', { simple: true });
+    db.pragma('foreign_keys = OFF');
+    try {
+      db.transaction(() => {
+        db.exec(relaxed.replace(/CREATE TABLE\s+(?:"reminders"|reminders)/i, 'CREATE TABLE reminders_channels_new'));
+        db.exec('INSERT INTO reminders_channels_new SELECT * FROM reminders');
+        db.exec('DROP TABLE reminders');
+        db.exec('ALTER TABLE reminders_channels_new RENAME TO reminders');
+        for (const object of objects) db.exec(object.sql);
+        if ((db.pragma('foreign_key_check') as unknown[]).length) throw new Error('提醒渠道迁移外键检查失败');
+      })();
+    } finally {
+      db.pragma(`foreign_keys = ${foreignKeys ? 'ON' : 'OFF'}`);
+    }
+  }
+}
 
 // 云端索引（status='remote'）：老表的 status CHECK 只认三个枚举，重建放宽；重建后要补回 FTS 触发器
 relaxRepeatRuleCheck(

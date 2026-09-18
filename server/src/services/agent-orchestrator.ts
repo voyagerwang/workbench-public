@@ -1,3 +1,4 @@
+import { executionErrorMessage } from './execution-error.js';
 /**
  * [INPUT]: agent_delegate 工具提交的结构化委派意图（objective/taskType/requestedExecutor）、
  *          inbound-context 归一化的来源元数据、agent-registry 白名单
@@ -70,7 +71,7 @@ function taskPresentation(status: string): { statusLabel: string; statusDetail: 
   if (['dispatched', 'acknowledged'].includes(status)) return { statusLabel: '等待执行回执', statusDetail: '消息送达不代表任务已经完成。' };
   if (status === 'executing') return { statusLabel: '执行中', statusDetail: '以执行端回执为准，成果尚未验收。' };
   if (status === 'pending_review') return { statusLabel: '独立验收中', statusDetail: '执行端已返回成果，独立验收尚未通过。' };
-  if (['approved', 'completed'].includes(status)) return { statusLabel: '已通过验收', statusDetail: '研究成果已通过独立验收；原项目未被修改。' };
+  if (['approved', 'completed'].includes(status)) return { statusLabel: '已通过验收', statusDetail: '任务成果已通过独立验收；实际变更与验证结果见报告。' };
   if (status === 'needs_human') return { statusLabel: '需要处理', statusDetail: '执行或验收未完成，详细原因见任务记录；不会盲目重跑。' };
   if (status === 'cancelled') return { statusLabel: '已记录取消', statusDetail: '外部执行是否停止仍需执行端确认。' };
   if (status === 'failed') return { statusLabel: '未完成', statusDetail: '请查看任务说明；不会自动重复派发。' };
@@ -81,7 +82,7 @@ export function getAgentTask(id: string): AgentTaskView | null {
   const row = db.prepare('SELECT a.*, p.name AS project_name FROM agent_tasks a LEFT JOIN projects p ON p.id = a.project_id WHERE a.id = ?').get(id) as (AgentTaskRow & { project_path: string | null; project_id: number | null; project_name: string | null; updated_at: string; last_error: string | null }) | undefined;
   if (!row) return null;
   const view = { ...rowToView(row, false), ...taskPresentation(row.status), projectPath: row.project_path, projectId: row.project_id, projectName: row.project_name,
-    updatedAt: row.updated_at, ...(row.last_error ? { statusDetail: row.last_error } : {}) };
+    updatedAt: row.updated_at, ...(row.last_error ? { statusDetail: executionErrorMessage(row.last_error) } : {}) };
   if(row.status==='ready_to_dispatch') {
     const config=getSetting<{paused?:boolean;enabled?:boolean;maxConcurrentJobs?:number;maxConcurrentContentJobs?:number;maxDailyJobs?:number}>('agentExecution');
     const isContent=Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE name='content_execution_jobs'").get()&&db.prepare('SELECT 1 FROM content_execution_jobs WHERE task_id=?').get(id));

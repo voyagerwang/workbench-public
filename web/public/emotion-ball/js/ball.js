@@ -45,6 +45,8 @@
     return node;
   }
   function r2(v) { return Math.round(v * 100) / 100; }
+  // 缩放是比例而非像素：两位小数会将 ±1.2% 的呼吸量化成三档。
+  function scaleValue(v) { return Math.round(v * 10000) / 10000; }
   function clamp(v, a, b) { return v < a ? a : (v > b ? b : v); }
   function rand(a, b) { return a + Math.random() * (b - a); }
   function shade(hex, amt) {
@@ -415,7 +417,7 @@
       eye.node.setAttribute('transform',
         'translate(' + r2(ex) + ' ' + r2(ey0) + ')' +
         (pose.rotate ? ' rotate(' + r2(pose.rotate) + ')' : '') +
-        ' scale(' + r2(sxBase * cn) + ' ' + r2(sy * fy) + ')' +
+        ' scale(' + scaleValue(sxBase * cn) + ' ' + scaleValue(sy * fy) + ')' +
         ' translate(' + r2(-base[0]) + ' ' + r2(-base[1]) + ')');
 
       var fill = sketch > 0.5 ? 'none' : pose.color;
@@ -434,7 +436,7 @@
       bodyG.setAttribute('transform',
         'translate(' + r2(HEAD_C + b.x) + ' ' + r2(HEAD_C + b.y) + ')' +
         ' rotate(' + r2(b.rotate || 0) + ')' +
-        ' scale(' + r2(b.scale) + ')' +
+        ' scale(' + scaleValue(b.scale) + ')' +
         ' translate(' + r2(-HEAD_C) + ' ' + r2(-HEAD_C) + ')');
       setBodyColor(b.color);
 
@@ -602,7 +604,7 @@
         var sz = Math.max(pc.r * (1 - 0.4 * u), 0.5);
         pc.el.setAttribute('opacity', fd.toFixed(3));
         pc.el.setAttribute('transform',
-          'translate(' + r2(pc.x) + ' ' + r2(pc.y) + ') rotate(' + r2(pc.rot) + ') scale(' + r2(sz) + ' ' + r2(sz * pc.stretch) + ')');
+          'translate(' + r2(pc.x) + ' ' + r2(pc.y) + ') rotate(' + r2(pc.rot) + ') scale(' + scaleValue(sz) + ' ' + scaleValue(sz * pc.stretch) + ')');
       }
     }
 

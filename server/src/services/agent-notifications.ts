@@ -1,3 +1,4 @@
+import { executionErrorMessage } from './execution-error.js';
 /**
  * [INPUT]: 代码与内容执行终态、冻结的来源会话、成果指纹与通道实际发送回执
  * [OUTPUT]: 持久通知台账、来源会话内的最终结果及明确的失败/未知状态
@@ -53,7 +54,7 @@ export async function deliverAgentNotifications() {
       // 发送正文是通过验收的成果，不再调用模型生成可能失真的摘要。
       const body = task.state === 'completed' && artifact?.reviewed
         ? `${task.id} 已通过独立验收。\n报告可在工作台任务成果中查看。`
-        : `${task.id} 尚未完成。${(task.error ?? '成果凭证不可用，需要核对。').split('\n')[0].slice(0,100)}`;
+        : `${task.id} 尚未完成。${executionErrorMessage(task.error ?? '成果凭证不可用，需要核对。')}`;
       db.prepare(`INSERT OR IGNORE INTO agent_execution_notifications(task_id,source,destination,body,created_at,updated_at) VALUES(?,?,?,?,?,?)`)
         .run(task.id, task.source, task.source_conversation_id ?? '', body, now(), now());
     }
@@ -64,7 +65,7 @@ export async function deliverAgentNotifications() {
         const source=JSON.parse(task.snapshot_json);const artifact=agentResult(task.task_id);
         const body=task.state==='completed'&&artifact
           ? `${task.task_id}：已完成，${task.note_id?'转写与总结已保存到随手记':'成果已保存'}。`
-          : `${task.task_id}：${artifact?(task.note_id?'转写与总结已保存到随手记。':'整理成果已生成。'): '尚未完成。'}${(task.error??'请查看任务详情。').replace(/^转写及整理成果已生成；/,'').split('\n')[0].slice(0,100)}`;
+          : `${task.task_id}：${artifact?(task.note_id?'转写与总结已保存到随手记。':'整理成果已生成。'): '尚未完成。'}${executionErrorMessage((task.error??'请查看任务详情。').replace(/^转写及整理成果已生成；/,''))}`;
         db.prepare('INSERT OR IGNORE INTO content_execution_notifications(task_id,source,destination,body,created_at,updated_at) VALUES(?,?,?,?,?,?)').run(task.task_id,source.source,source.source_conversation_id??'',body,now(),now());
       }
     }

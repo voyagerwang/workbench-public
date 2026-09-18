@@ -36,6 +36,8 @@
     return node;
   }
   function r2(v) { return Math.round(v * 100) / 100; }
+  // 比例不能按像素精度取整，否则细微呼吸/眨眼会变成离散跳变。
+  function scaleValue(v) { return Math.round(v * 10000) / 10000; }
   function clamp(v, a, b) { return v < a ? a : (v > b ? b : v); }
   function shade(hex, amt) {
     var h = hex.replace('#', '');
@@ -485,7 +487,7 @@
       var tf =
         'translate(' + r2(ex) + ' ' + r2(ey0) + ')' +
         (pose.rotate ? ' rotate(' + r2(pose.rotate) + ')' : '') +
-        ' scale(' + r2(sxBase * cn) + ' ' + r2(syAll * fy) + ')';
+        ' scale(' + scaleValue(sxBase * cn) + ' ' + scaleValue(syAll * fy) + ')';
       var tfFull = tf + ' translate(' + r2(-base[0]) + ' ' + r2(-base[1]) + ')';
       eye.node.setAttribute('transform', tfFull);
 
@@ -568,7 +570,7 @@
 
       var lidTf = open >= 0.995 && open <= 1.005
         ? ''
-        : 'translate(' + r2(base[0]) + ' ' + r2(base[1]) + ') scale(1 ' + r2(open) + ') translate(' + r2(-base[0]) + ' ' + r2(-base[1]) + ')';
+        : 'translate(' + r2(base[0]) + ' ' + r2(base[1]) + ') scale(1 ' + scaleValue(open) + ') translate(' + r2(-base[0]) + ' ' + r2(-base[1]) + ')';
       if (lidTf !== eye.lastLidTf) {
         if (lidTf) {
           eye.lidClip.setAttribute('transform', lidTf);
@@ -651,7 +653,7 @@
       bodyG.setAttribute('transform',
         'translate(' + r2(C + b.x) + ' ' + r2(C + b.y) + ')' +
         ' rotate(' + r2((b.rotate || 0) + spinTilt) + ')' +
-        ' scale(' + r2(b.scale * spinSqX) + ' ' + r2(b.scale) + ')' +
+        ' scale(' + scaleValue(b.scale * spinSqX) + ' ' + scaleValue(b.scale) + ')' +
         ' translate(' + r2(-C) + ' ' + r2(-C) + ')');
       setBodyColor(b.color);
 
@@ -662,7 +664,7 @@
       if (shOp > 0.001) {
         shadow.setAttribute('transform',
           'translate(' + r2(C + b.x * 0.7) + ' ' + shadowCy + ')' +
-          ' scale(' + r2((1 - 0.3 * lift) * b.scale) + ' ' + r2(1 - 0.35 * lift) + ')' +
+          ' scale(' + scaleValue((1 - 0.3 * lift) * b.scale) + ' ' + scaleValue(1 - 0.35 * lift) + ')' +
           ' translate(' + (-C) + ' ' + (-shadowCy) + ')');
       }
 

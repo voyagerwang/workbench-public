@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 当前路由、工作台设置与导航/助手组件
- * [OUTPUT]: AppShell 全局导航和页面容器；文档工作区分配动态视口剩余高度
+ * [OUTPUT]: AppShell 全局导航和页面容器；提醒的应用内投递与失败兜底
  * [POS]: 页面布局边界，分流滚动方式并让展开文档覆盖导航
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -236,7 +236,7 @@ function readSeen(): Set<string> {
 /**
  * 轮询提醒，按渠道分工：
  * - inapp：服务端不投递，应用内提示由前端负责（这是它唯一的送达路径）
- * - system / auto / feishu / dingtalk：服务端已投递，前端只更新未读状态，不重复打扰
+ * - auto、包含 inapp 的组合、失败或不可用：应用内提示兜底；其余等待服务端回执
  */
 function useReminderWatcher() {
   const { data: reminders } = useQuery({
@@ -248,12 +248,14 @@ function useReminderWatcher() {
   useEffect(() => {
     if (!reminders) return;
     const seen = readSeen();
-    const newlyFired = reminders.filter((r) => r.status === 'fired' && !seen.has(seenKeyOf(r.id, r.fired_at)));
+    const newlyFired = reminders.filter((r) => r.status === 'fired' && r.delivery_status !== 'pending' && !seen.has(seenKeyOf(r.id, r.fired_at)));
     if (newlyFired.length === 0) return;
     for (const r of newlyFired) seen.add(seenKeyOf(r.id, r.fired_at));
     localStorage.setItem(SEEN_KEY, JSON.stringify([...seen].slice(-SEEN_LIMIT)));
 
-    const mine = newlyFired.filter((r) => (r.channel ?? 'auto') === 'inapp');
+    const mine = newlyFired.filter((r) => (r.channel ?? 'auto') === 'auto'
+      || r.channel?.split(',').includes('inapp')
+      || r.delivery_status === 'failed' || Boolean(r.channel_note));
     if (mine.length === 0) return;
     import('sonner').then(({ toast }) => {
       for (const r of mine.slice(0, 3)) {

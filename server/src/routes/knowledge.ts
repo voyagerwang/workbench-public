@@ -54,7 +54,7 @@ import {
 import { createImportBatch, runImportBatch } from '../services/knowledge-lifecycle.js';
 
 // 知识空间同步：枚举云端全部文档，建索引（也可选读全文），进度轮询
-type KnowledgeSyncJob = {
+export type KnowledgeSyncJob = {
   id: string;
   provider: KnowledgeProvider;
   mode: 'index' | 'full';
@@ -74,11 +74,26 @@ type KnowledgeSyncJob = {
 
 const syncJobs = new Map<string, KnowledgeSyncJob>();
 
+export function startKnowledgeSyncJob(input: { provider: KnowledgeProvider; spaceUrl?: string; mode?: 'index' | 'full'; scope?: SyncScope }): KnowledgeSyncJob {
+  const provider = input.provider;
+  const mode = input.mode ?? 'index';
+  const spaceUrl = input.spaceUrl?.trim();
+  if (provider === 'dingtalk' && (!spaceUrl || !/dingtalk\.com|alidocs\.com/i.test(spaceUrl))) throw new Error('钉钉同步需要有效的知识库分享链接');
+  const scope = input.scope;
+  const scoped = Boolean(scope && (scope.wiki?.length || scope.drive?.length || scope.docs?.length));
+  const spaceHint = provider === 'dingtalk' ? (spaceUrl ?? null) : scoped ? (scope!.wiki?.length ? `飞书知识空间（已选 ${scope!.wiki.length} 个范围）` : scope!.drive?.length ? `飞书云文档（已选 ${scope!.drive.length} 个文件夹）` : `飞书文档（已选 ${scope!.docs?.length ?? 0} 份）`) : '我的飞书知识库';
+  for (const running of syncJobs.values()) if (running.status === 'running' && running.provider === provider && running.spaceHint === spaceHint) return running;
+  const job: KnowledgeSyncJob = { id: Math.random().toString(36).slice(2, 12), provider, mode, status: 'running', total: 0, indexed: 0, failed: 0, current: null, error: null, spaceHint, title: null, startedAt: Date.now() };
+  syncJobs.set(job.id, job);
+  runKnowledgeSync(job, { spaceUrl: provider === 'dingtalk' ? spaceUrl : undefined, scope });
+  return job;
+}
+
 function syncJob(id: string): KnowledgeSyncJob | null {
   return syncJobs.get(id) ?? null;
 }
 
-type SyncScope = {
+export type SyncScope = {
   wiki?: Array<{ spaceId: string; spaceName?: string; parentNodeToken?: string }>;
   drive?: string[];
   docs?: Array<{ reference: string; title?: string; url?: string | null; space?: string }>;

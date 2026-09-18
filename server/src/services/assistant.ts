@@ -71,6 +71,7 @@ export type AssistantContext = {
 export type AssistantDraft = {
   type: 'task' | 'note' | 'reminder';
   content: string;
+  detail?: string | null;
   plannedDate: string | null;
   remindAt: string | null;
   repeatRule: RepeatRule;
@@ -356,6 +357,7 @@ function finalizeReply(
     const captured = acceptAssistantDrafts(drafts.map((draft) => ({
       type: draft.type,
       content: draft.content,
+      detail: draft.detail,
       plannedDate: draft.plannedDate,
       remindAt: draft.remindAt,
       repeatRule: draft.repeatRule,
@@ -429,7 +431,7 @@ ${context.memoryBlock ?? ''}
 7. 多个同类事项组成一份清单时只产出一条 task：content 写简洁概括标题，detail 用 Markdown 有序列表完整保留各点；不要把所有事项拼进标题，也不要拆成多条，除非用户明确要求分别建任务。
 7. 重复执行是结构化语义：用户说“每周五/每星期五/每个工作日/每天/每月X号/每N天”时，必须填 repeatRule（weekly/weekdays/daily/monthly/ndays:N），plannedDate 填下一次实际执行日期；只说“周五/下周五”时 repeatRule 填 none。不要把周期词只写在 content 里。
    例：“创建每周五写周报的任务”只能产出一条 task，content 为“写周报”，repeatRule 为 weekly，plannedDate 为下一个周五；“每月10号交房租”repeatRule 为 monthly；“每3天跑步”repeatRule 为 ndays:3。
-8. drafts 是新建任务/笔记/提醒的唯一通道，由系统在返回前直接落库，你不需要也不应该再找别的写库办法。因此：
+8. 普通快速记录用 drafts，由系统在返回前直接落库；需要指定项目、写入完整详情、修改任意已有对象或操作回收站时，必须改用对应的 workbench_* 专用工具，不能让 drafts 代替结构化操作。因此：
    - 回复里可以确认“记下了”，但**严禁复述具体落到哪一天、几点、哪个模块**——那由系统生成的凭证卡展示，你复述的数字容易和真实结果不一致。
    - 严禁说“我已经保存/已写入/已创建”；落库是系统做的。也不要为了同一条内容重复产出 drafts。
    - 用户明确要求把内容写入某个已有任务的详情时，这已经授权执行：必须调用 workbench_update_task_detail 真正写入并根据工具的 verified 结果确认，不能只在回复中生成内容，更不能让用户手动复制粘贴。

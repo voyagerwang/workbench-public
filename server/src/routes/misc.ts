@@ -1,7 +1,7 @@
 import { modelFetch } from '../services/model-call.js';
 /**
  * [INPUT]: HTTP 请求——设置读写(含 feishuBot 配置及其 relayExperimentEnabled 开关)、飞书 bot 消息发送、
- *          通知与模型连通性测试、周回顾的查询/保存/重置、数据导出
+ *          通知多选与微信开关、模型连通性测试、周回顾的查询/保存/重置、数据导出
  * [OUTPUT]: GET/PUT /api/settings、POST /api/feishu/bot/send、POST /api/notify/test、POST /api/model/test、POST /api/image-model/test、
  *           GET/POST /api/review/weekly(+save/reset/weeks)、GET /api/export
  * [POS]: 服务端杂项路由:设置中心、周回顾、数据导出;relayExperimentEnabled 经此持久化,
@@ -10,6 +10,7 @@ import { modelFetch } from '../services/model-call.js';
  */
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
+import { reminderChannelSchema } from '../services/reminder-channels.js';
 import { db, getSetting, setSetting } from '../db.js';
 import { nextTrigger } from '../scheduler.js';
 import { readConfig } from '../services/mood.js';
@@ -111,7 +112,8 @@ export default async function miscRoutes(app: FastifyInstance) {
       notify: z.object({
         prefix: z.string().max(30).optional(),
         pushReminders: z.boolean().optional(),
-        defaultChannel: z.enum(['auto', 'inapp', 'system', 'feishu', 'dingtalk']).optional(), // 提醒默认送达渠道
+        defaultChannel: reminderChannelSchema.optional(),
+        weixinEnabled: z.boolean().optional(), // 提醒默认送达渠道
         dingtalk: z.object({
           webhook: z.string().max(600).optional(), // 空字符串 = 清除
           secret: z.string().max(300).optional(),   // 空字符串 = 清除，不传 = 不修改
@@ -169,6 +171,7 @@ export default async function miscRoutes(app: FastifyInstance) {
       if (b.notify.prefix !== undefined) next.prefix = b.notify.prefix.trim();
       if (b.notify.pushReminders !== undefined) next.pushReminders = b.notify.pushReminders;
       if (b.notify.defaultChannel !== undefined) next.defaultChannel = b.notify.defaultChannel;
+      if (b.notify.weixinEnabled !== undefined) next.weixinEnabled = b.notify.weixinEnabled;
       for (const kind of ['dingtalk', 'feishu'] as const) {
         const patch = b.notify[kind];
         if (!patch) continue;

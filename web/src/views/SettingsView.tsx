@@ -1,11 +1,11 @@
 /**
  * [INPUT]: 设置查询结果与保存/测试模型、日历、通知、外部连接的 API 操作
- * [OUTPUT]: 工作台设置页，维护模型协议、复杂/日常推理档位及各外部能力配置
+ * [OUTPUT]: 工作台设置页，维护模型协议、复杂/日常推理档位及多选提醒渠道配置
  * [POS]: 设置模块的统一配置入口；模型策略被助手运行时读取，其他卡片消费同一设置缓存
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   BellRing, Bot, CalendarSync, CalendarClock, Check, ChevronRight, Cloud,
@@ -27,7 +27,7 @@ import { NotifyChannelsCard } from '@/components/NotifyChannelsCard';
 import { NotifyStatusChip } from '@/components/NotifyStatusChip';
 import { DocumentAccessCard } from '@/components/DocumentAccessCard';
 import { SyncSettingsCard } from '@/components/SyncSettingsCard';
-import { CHANNEL_OPTIONS } from '@/views/RemindersView';
+import { DeliveryMethodPicker } from '@/components/ReminderChannelPicker';
 
 const ACCENTS = [
   { key: 'violet', color: '#8b80f9', label: '霓虹紫' },
@@ -51,6 +51,7 @@ function shortcutKeys(shortcut: string): string[] {
 }
 
 export function SettingsView() {
+  const location = useLocation();
   const qc = useQueryClient();
   const navigate = useNavigate();
   const petName = useAssistantName();
@@ -116,11 +117,12 @@ export function SettingsView() {
 
   const saveMut = useMutation({
     mutationFn: (b: Parameters<typeof api.saveSettings>[0]) => api.saveSettings(b),
-    onSuccess: () => {
+    onSuccess: (saved) => {
       toast.success('已保存');
       setAppSecret('');
-      qc.invalidateQueries({ queryKey: qk.settings });
+      qc.setQueryData(qk.settings, saved);
       qc.invalidateQueries({ queryKey: qk.eventStatus });
+      return qc.invalidateQueries({ queryKey: qk.settings });
     },
     onError: (e) => toast.error(e.message),
   });
@@ -283,14 +285,14 @@ export function SettingsView() {
 
   // 深链锚点：/settings#settings-orb 这类链接进来直接滚到对应分区
   useEffect(() => {
-    const h = window.location.hash.slice(1);
+    const h = location.hash.slice(1);
     if (h) {
       const section = SECTIONS.find((s) => s.id === h)?.id
-        ?? (h === 'settings-calendar' ? 'settings-notify' : h === 'document-access' ? 'settings-bots' : null);
+        ?? ((h === 'settings-calendar' || h.startsWith('settings-notify-')) ? 'settings-notify' : h === 'document-access' ? 'settings-bots' : null);
       if (section) setActiveSection(section);
       requestAnimationFrame(() => document.getElementById(h)?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
     }
-  }, []);
+  }, [location.hash]);
 
   useEffect(() => {
     const observer = new IntersectionObserver((entries) => {
@@ -728,18 +730,9 @@ export function SettingsView() {
             <Card>
               <CardHeader><CardTitle><BellRing className="size-4 text-accent" /> 默认送达渠道</CardTitle></CardHeader>
               <CardBody className="space-y-3 p-5">
-                <Field label="提醒默认渠道" hint="单条提醒可在新建或待触发列表中单独修改；「自动」会使用应用内提醒和当前可用的通知通道">
-                  <Select
-                    value={settings?.notify?.defaultChannel ?? 'auto'}
-                    onChange={(e) => saveMut.mutate({ notify: { defaultChannel: e.target.value as 'auto' | 'inapp' | 'system' | 'feishu' | 'dingtalk' | 'weixin' } })}
-                    className="max-w-xs text-xs"
-                  >
-                    {CHANNEL_OPTIONS.map((o) => (
-                      <option key={o.value} value={o.value}>
-                        {settings?.notify?.systemSupported || o.value !== 'system' ? o.label : `${o.label}（仅支持 macOS）`}
-                      </option>
-                    ))}
-                  </Select>
+                <Field label="默认送达渠道（可多选）" hint="跟随设置的提醒会在触发时使用这里的最新选择；自定义提醒保留自己的渠道。">
+                  <DeliveryMethodPicker defaults value={settings?.notify?.defaultChannel ?? 'auto'} notify={settings?.notify}
+                    disabled={saveMut.isPending} onChange={(defaultChannel) => saveMut.mutate({ notify: { defaultChannel } })} />
                 </Field>
                 <div className="flex flex-wrap items-center gap-2">
                   <NotifyStatusChip />
@@ -747,6 +740,7 @@ export function SettingsView() {
               </CardBody>
             </Card>
             <NotifyChannelsCard />
+            <div id="settings-notify-weixin" className="scroll-mt-28"><ClawbotCard /></div>
 
             <div id="settings-calendar" className="scroll-mt-28 space-y-5 border-t border-line pt-7 md:scroll-mt-20">
             <SectionHeading title="日历源" desc="钉钉 CalDAV 与 ICS 订阅都会每 5 分钟自动同步进日历" />
@@ -888,7 +882,6 @@ export function SettingsView() {
           <section id="settings-bots" className="scroll-mt-28 space-y-5 md:scroll-mt-20">
             <SectionHeading title="连接与权限" desc="按平台集中管理；只有主动使用对应能力时才需要授权" />
             <ConnectionPermissionSummary />
-            <ClawbotCard />
             <DocumentAccessCard />
           </section>
         </div>

@@ -1,6 +1,6 @@
 /**
  * [INPUT]: Task 与既有任务更新 API、提醒/回顾查询键
- * [OUTPUT]: TaskDocument，提供任务属性与完成反馈的文档适配
+ * [OUTPUT]: TaskDocument，提供任务属性、完成反馈及 Markdown 复制入口的文档适配
  * [POS]: 清单入口到共享详情的边界，向互斥入口注册完整保存回调；不复制编辑器、自动保存或助手浮层
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -49,7 +49,7 @@ export function TaskDocument({ task, onClose, mode = 'side', onRegisterFlush }: 
     return () => onRegisterFlush?.(null);
   }, [onRegisterFlush]);
   const done = session.value.status === 'done';
-  return <DocumentDetail session={session} mode={mode} label="清单项详情" titleRequired onClose={onClose}
+  return <DocumentDetail session={session} mode={mode} label="清单项详情" titleRequired copyMarkdown onClose={onClose}
     context={{ kind: 'task', taskId: task.id }}
     getAssistantIdentity={async () => ({ sessionKey: `task:${task.id}`, context: { kind: 'task', taskId: task.id } })}
     getLink={() => `/documents/task/${task.id}`}

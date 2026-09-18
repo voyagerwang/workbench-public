@@ -29,7 +29,7 @@ function PageCanvas({ pdf, page, zoom }: { pdf: PDFDocumentProxy; page: number; 
     const canvas = document.createElement('canvas');
     canvas.setAttribute('role', 'img'); canvas.setAttribute('aria-label', `第 ${page} 页`);
     const container = host.current!.querySelector('[data-pdf-canvas]')!;
-    container.replaceChildren(canvas);
+    // 保留当前画布及高度；新页在离屏画布中完成后再替换，避免外层滚动位置因高度塌缩被截断。
     void pdf.getPage(page).then(async (value) => {
       if (cancelled) return;
       const natural = value.getViewport({ scale: 1 });
@@ -40,7 +40,7 @@ function PageCanvas({ pdf, page, zoom }: { pdf: PDFDocumentProxy; page: number; 
       canvas.style.width = `${viewport.width / ratio}px`; canvas.style.height = `${viewport.height / ratio}px`;
       render = value.render({ canvas, viewport });
       await render.promise;
-      if (!cancelled) setRendering(false);
+      if (!cancelled) { container.replaceChildren(canvas); setRendering(false); }
     }).catch((reason: Error) => { if (!cancelled && reason.name !== 'RenderingCancelledException') { setError('这一页未能显示，请切换页面或重新打开预览'); setRendering(false); } });
     return () => { cancelled = true; render?.cancel(); };
   }, [pdf, page, width, zoom]);

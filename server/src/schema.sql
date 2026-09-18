@@ -60,7 +60,7 @@ CREATE TABLE IF NOT EXISTS reminders (
   trigger_at  TEXT NOT NULL,
   repeat_rule TEXT NOT NULL DEFAULT 'none' CHECK (repeat_rule IN ('none', 'daily', 'weekly', 'weekdays', 'monthly') OR repeat_rule GLOB 'ndays:[0-9]*'),
   status      TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'fired', 'done')),
-  channel     TEXT NOT NULL DEFAULT 'auto' CHECK (channel IN ('auto', 'inapp', 'system', 'feishu', 'dingtalk')), -- 送达渠道：auto=系统通知兜底+已启用推送
+  channel     TEXT NOT NULL DEFAULT 'auto', -- auto=跟随设置；支持单渠道或逗号分隔多选
   fired_at    TEXT,
   linked_task_id INTEGER REFERENCES tasks(id) ON DELETE CASCADE, -- 任务附带的提醒
   series_id TEXT,                                -- 重复系列标识：同一系列的各期共享，新建重复提醒时生成、下一期继承

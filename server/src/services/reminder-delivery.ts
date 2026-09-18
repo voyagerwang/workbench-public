@@ -6,7 +6,7 @@
 // 发之前没有回执、发失败没人知道，是「提醒到底响没响」这个问题最大的黑洞。
 import { db, now } from '../db.js';
 import { isWeixinReady } from '../routes/clawbot.js';
-import { readNotify, sendNotify, sendSystemNotification, sendWeixinNotify } from './notify.js';
+import { readNotify, sendNotify, sendSystemNotification, sendWeixinNotify, systemNotifySupported } from './notify.js';
 
 export type DeliveryKind = 'system' | 'feishu' | 'dingtalk' | 'weixin';
 
@@ -18,6 +18,8 @@ export interface DeliveryRow {
   channel: string;
   delivery_attempts: number;
   status?: string;
+  delivered_channels?: string;
+  delivery_status?: string;
 }
 
 const CHANNEL_LABEL: Record<string, string> = {
@@ -41,35 +43,33 @@ export function localAfter(ms: number): string {
 
 /**
  * 按提醒的渠道设置决定实际往哪发。
- * 用户明确选了定向渠道（飞书/钉钉）但那个渠道没配好时，降级到系统通知并写明原因——
- * 不静默改成 auto：那样界面上用户看到的还是「飞书」，实际却走的系统通知，等于骗人。
+ * auto 在触发时读取默认设置；多选逐项检查可用性与外部推送总开关。
+ * 未配置或停用保留原因，由应用内兜底，不擅自改发其他渠道。
  */
 export function planDelivery(channel: string): { channels: DeliveryKind[]; note: string | null } {
   const cfg = readNotify();
-  switch (channel) {
-    case 'inapp':
-      return { channels: [], note: null };
-    case 'system':
-      return { channels: ['system'], note: null };
-    case 'feishu':
-    case 'dingtalk':
-      return cfg.channels[channel].enabled
-        ? { channels: [channel], note: null }
-        : { channels: ['system'], note: `${CHANNEL_LABEL[channel]}未配置或未启用，本次已降级为系统通知` };
-    case 'weixin':
-      return cfg.weixinEnabled && isWeixinReady()
-        ? { channels: ['weixin'], note: null }
-        : { channels: ['system'], note: '微信未绑定或未启用，本次已降级为系统通知' };
-    default: {
-      // auto：系统通知兜底 + 总开关打开时追加已启用的外部渠道
-      const candidates = cfg.pushReminders ? (['feishu', 'dingtalk', 'weixin'] as const) : [];
-      const external = candidates.filter((k) => {
-        if (k === 'weixin') return cfg.weixinEnabled && isWeixinReady();
-        return cfg.channels[k].enabled;
-      });
-      return { channels: ['system', ...external], note: null };
+  const chosen = channel === 'auto' ? cfg.defaultChannel : channel;
+  const automatic = chosen === 'auto';
+  const requested = automatic ? ['system', 'feishu', 'dingtalk', 'weixin'] : chosen.split(',');
+  const channels: DeliveryKind[] = [];
+  const notes: string[] = [];
+  for (const kind of requested) {
+    if (kind === 'inapp') continue;
+    if (kind === 'system') {
+      if (systemNotifySupported) channels.push('system');
+      else if (!automatic) notes.push('当前服务端不支持 macOS 系统通知');
+      continue;
     }
+    if (kind !== 'feishu' && kind !== 'dingtalk' && kind !== 'weixin') continue;
+    if (!cfg.pushReminders) {
+      if (!notes.includes('外部提醒推送已暂停')) notes.push('外部提醒推送已暂停');
+      continue;
+    }
+    const ready = kind === 'weixin' ? cfg.weixinEnabled && isWeixinReady() : cfg.channels[kind].enabled;
+    if (ready) channels.push(kind);
+    else if (!automatic) notes.push(`${CHANNEL_LABEL[kind]}未配置或未启用`);
   }
+  return { channels: [...new Set(channels)], note: notes.length ? `${notes.join('；')}；保留应用内提醒（需打开页面）` : null };
 }
 
 const hhmm = (iso: string) => iso.slice(11, 16);
@@ -98,13 +98,15 @@ export async function deliverRows(rows: DeliveryRow[]): Promise<void> {
     if (plan.channels.length === 0) {
       // 只应用内：服务端什么都不发，由网页端投递。回执记 skipped，与「发送失败」区分开
       writeReceipt(row.id, {
-        status: 'skipped', error: null, channels: '', note: null,
+        status: row.delivered_channels ? 'sent' : 'skipped', error: null, channels: row.delivered_channels ?? '', note: plan.note,
         attempts: row.delivery_attempts, retryAt: null,
       });
       continue;
     }
-    const key = plan.channels.join(',');
-    const bucket = buckets.get(key) ?? { kinds: plan.channels, note: plan.note, rows: [] };
+    const previous = (row.delivered_channels ?? '').split(',');
+    const remaining = plan.channels.filter((kind) => !previous.includes(kind));
+    const key = JSON.stringify([remaining, plan.note]);
+    const bucket = buckets.get(key) ?? { kinds: remaining, note: plan.note, rows: [] };
     bucket.rows.push(row);
     buckets.set(key, bucket);
   }
@@ -121,10 +123,10 @@ export async function deliverRows(rows: DeliveryRow[]): Promise<void> {
         ? null
         : failures.map((f) => `${CHANNEL_LABEL[f.kind]}：${f.error ?? '未知错误'}`).join('；');
       writeReceipt(row.id, {
-        // 只要有任一渠道送达就算成功：用户确实收到了，剩下的渠道失败只是降级，不值得再自动重试
-        status: sent.length > 0 ? 'sent' : 'failed',
+        // 混合结果保留成功渠道，后续仅重试失败渠道。
+        status: failures.length > 0 ? 'failed' : 'sent',
         error,
-        channels: sent.join(','),
+        channels: [...new Set([...(row.delivered_channels ?? '').split(',').filter(Boolean), ...sent])].join(','),
         note: bucket.note,
         attempts,
         retryAt,
@@ -157,12 +159,12 @@ function writeReceipt(id: number, p: {
  */
 export async function resendReminder(id: number): Promise<{ ok: boolean; error?: string }> {
   const row = db.prepare(
-    'SELECT id, message, trigger_at, channel, status, delivery_attempts FROM reminders WHERE id = ? AND deleted_at IS NULL',
+    'SELECT id, message, trigger_at, channel, status, delivery_attempts, delivered_channels, delivery_status FROM reminders WHERE id = ? AND deleted_at IS NULL',
   ).get(id) as DeliveryRow | undefined;
   if (!row) return { ok: false, error: '提醒不存在或已删除' };
   if (row.status !== 'fired') return { ok: false, error: '只有已到点的提醒可以重发' };
   db.prepare("UPDATE reminders SET delivery_status = 'pending', delivery_attempts = 0, next_retry_at = NULL WHERE id = ?").run(id);
-  await deliverRows([{ ...row, delivery_attempts: 0 }]);
+  await deliverRows([{ ...row, delivery_attempts: 0, delivered_channels: row.delivery_status === 'failed' ? row.delivered_channels : '' }]);
   const after = db.prepare('SELECT delivery_status, delivery_error FROM reminders WHERE id = ?').get(id) as
     | { delivery_status: string; delivery_error: string | null }
     | undefined;
@@ -173,7 +175,7 @@ export async function resendReminder(id: number): Promise<{ ok: boolean; error?:
 /** 失败退避重试：只重试仍处于 fired 的提醒——用户已完成或延后就别再打扰 */
 export function retryFailedDeliveries(): void {
   const rows = db.prepare(
-    `SELECT id, message, trigger_at, channel, delivery_attempts FROM reminders
+    `SELECT id, message, trigger_at, channel, delivery_attempts, delivered_channels FROM reminders
       WHERE status = 'fired' AND deleted_at IS NULL AND delivery_status = 'failed'
         AND next_retry_at IS NOT NULL AND next_retry_at <= ?`,
   ).all(now()) as DeliveryRow[];

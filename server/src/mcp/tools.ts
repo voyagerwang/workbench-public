@@ -6,7 +6,7 @@ import { db, now, today } from '../db.js';
 import { extractRecurringSchedule, repeatRuleSchema, stripRecurringPrefix } from '../services/recurrence.js';
 import { extractWhen } from '../services/classify.js';
 
-const reminderChannelSchema = z.enum(['auto', 'inapp', 'system', 'feishu', 'dingtalk']);
+import { reminderChannelSchema } from '../services/reminder-channels.js';
 
 
 import { reclassifyCapture, triageCapture, type CaptureItem } from '../services/triage.js';
@@ -319,7 +319,7 @@ export function registerTools(server: McpServer): void {
     remindAt: z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/).nullable().optional().describe('到点提醒'),
     repeatRule: repeatRuleSchema.optional().describe('重复规则；每周五等周期任务用 weekly，并把 plannedDate 填下一次周五；每月X号用 monthly，每N天用 ndays:N'),
     priority: z.number().int().min(0).max(2).optional().describe('0 普通 / 1 重要 / 2 紧急重要'),
-    channel: reminderChannelSchema.optional().describe('提醒送达渠道；不传则用设置里的默认渠道'),
+    channel: reminderChannelSchema.optional().describe('送达渠道：auto 跟随设置；inapp/system/feishu/dingtalk/weixin，支持逗号分隔多选，如 feishu,dingtalk；不传则跟随默认设置'),
   }, async (b) => {
     const recurring = extractRecurringSchedule(b.title);
     const title = recurring ? stripRecurringPrefix(b.title) : b.title;
@@ -352,7 +352,7 @@ export function registerTools(server: McpServer): void {
     remindAt: z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/).nullable().optional(),
     repeatRule: repeatRuleSchema.optional().describe('重复规则；完成后自动生成下一期任务'),
     priority: z.number().int().min(0).max(2).optional(),
-    channel: reminderChannelSchema.optional().describe('提醒送达渠道；不传则用设置里的默认渠道'),
+    channel: reminderChannelSchema.optional().describe('送达渠道：auto 跟随设置；inapp/system/feishu/dingtalk/weixin，支持逗号分隔多选，如 feishu,dingtalk；不传则跟随默认设置'),
   }, async (b) => {
     const cur = db.prepare('SELECT * FROM tasks WHERE id = ? AND deleted_at IS NULL').get(b.id) as Record<string, unknown> | undefined;
     if (!cur) throw new Error(`任务 #${b.id} 不存在`);
@@ -502,7 +502,7 @@ export function registerTools(server: McpServer): void {
     message: z.string().min(1).max(500),
     triggerAt: z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/).describe('触发时间 YYYY-MM-DDTHH:mm（本地时间）'),
     repeatRule: repeatRuleSchema.default('none').optional(),
-    channel: reminderChannelSchema.optional().describe('送达渠道；不传则用设置里的默认渠道'),
+    channel: reminderChannelSchema.optional().describe('送达渠道：auto 跟随设置；inapp/system/feishu/dingtalk/weixin；多选用逗号分隔，不传则跟随默认设置'),
   }, async (b) => {
     const info = db.prepare('INSERT INTO reminders (id, message, trigger_at, repeat_rule, channel) VALUES (sync_id(), ?, ?, ?, ?)')
       .run(b.message.trim(), b.triggerAt, b.repeatRule ?? 'none', resolveReminderChannel(b.channel));

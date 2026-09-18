@@ -97,7 +97,6 @@
         var currentEmotion = '02';
         var currentCharacter = allowedCharacters.indexOf(initialCharacter) >= 0 ? initialCharacter : 'ball';
         var staticMode = params.get('static') === '1' || Boolean(hostMatch && hostMatch[1] === 'static');
-        var quiet = false;
         var gaze = null;
         var engine;
 
@@ -153,7 +152,7 @@
           }
           window.__eb = engine; // 调试/测试用
           syncZzzSize();
-          if (quiet || staticMode) {
+          if (reduced || staticMode) {
             engine.setActive(false);
             engine.renderStatic();
           }
@@ -226,9 +225,8 @@
             resetFollow();
           }
           if (data.type === 'quiet') {
-            quiet = Boolean(data.value);
-            engine.setActive(!quiet && !reduced && !staticMode);
-            if (quiet || reduced || staticMode) engine.renderStatic();
+            engine.setActive(!reduced && !staticMode);
+            if (reduced || staticMode) engine.renderStatic();
           }
         });
 

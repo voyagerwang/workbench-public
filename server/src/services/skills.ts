@@ -1,13 +1,14 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync, lstatSync } from 'node:fs';
 import { homedir } from 'node:os';
+import { fileURLToPath } from 'node:url';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { realpathSync } from 'node:fs';
 import { db, now } from '../db.js';
 
 /**
  * 本机 Skill 扫描：以磁盘上的 SKILL.md 为唯一事实来源。
- * AI 资源库路由和云宝对话共用这一份实现，避免两处各扫一遍目录。
+ * AI 资源库路由和云宝对话共用这一份实现；项目根按模块位置定位，不依赖常驻服务启动目录。
  * 文件后半是 Skill 安全写入（workbench_save_skill 两段式）：preview/approve/consume 状态机、
  * 落盘防线与读回验证——安全规则集中在 skills.ts，工具层只做适配（docs/social-link-skill-capture-plan.md）。
  */
@@ -30,6 +31,7 @@ export type SkillRecord = {
 export const personalRoot = resolve(homedir(), '.codex', 'skills');
 export const claudeRoot = resolve(homedir(), '.claude', 'skills');
 export const scanRoots = [
+  { path: fileURLToPath(new URL('../../../.agents/skills', import.meta.url)), source: 'shared' as const },
   { path: personalRoot, source: 'personal' as const },
   { path: claudeRoot, source: 'claude' as const },
   { path: resolve(homedir(), '.agents', 'skills'), source: 'shared' as const },

@@ -52,7 +52,7 @@ export function ClawbotCard() {
   const { data: settings } = useQuery({ queryKey: qk.settings, queryFn: api.settings });
   const setWeixin = useMutation({
     mutationFn: (v: boolean) => api.saveSettings({ notify: { weixinEnabled: v } }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: qk.settings }); },
+    onSuccess: (saved) => { qc.setQueryData(qk.settings, saved); return qc.invalidateQueries({ queryKey: qk.settings }); },
     onError: (e) => toast.error('保存失败', { description: e.message }),
   });
 

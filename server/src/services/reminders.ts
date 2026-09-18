@@ -1,21 +1,21 @@
 // 任务 ↔ 提醒的联动：一条提醒要么独立存在，要么挂在某个清单项上（reminders.linked_task_id）。
 // 分诊与改分类都靠这个「同一行提醒换归属」的机制来避免重复创建，并从任务完成时自动失效。
 import { db, now } from '../db.js';
-import { readNotify, type ReminderChannel } from './notify.js';
+import { type ReminderChannel } from './notify.js';
 
 export const taskReminderMessage = (title: string) => `任务 · ${title}`;
 
 export type { ReminderChannel };
 
-const CHANNELS: readonly ReminderChannel[] = ['auto', 'inapp', 'system', 'feishu', 'dingtalk'];
+import { reminderChannelSchema } from './reminder-channels.js';
 
 /**
- * 新建提醒用哪个渠道：调用方显式传的优先，没传就回落设置里的「默认送达渠道」。
+ * 新建提醒：显式选择规范化保存，未指定保存 auto，在触发时跟随默认设置。
  * 四个创建入口（提醒页 / 助手 MCP / 分诊 / 任务联动）都必须走这里，否则设置项只在页面生效。
  */
 export function resolveReminderChannel(explicit?: string | null): ReminderChannel {
-  const found = CHANNELS.find((c) => c === explicit);
-  return found ?? readNotify().defaultChannel;
+  if (explicit == null) return 'auto';
+  return reminderChannelSchema.parse(explicit);
 }
 
 /** 设 remindAt 则 upsert 联动提醒；设 null/undefined 则清除未触发的联动提醒 */

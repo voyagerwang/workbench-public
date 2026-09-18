@@ -1,17 +1,18 @@
 import { currentModelContext } from './model-call.js';
 /**
  * [INPUT]: 可信入站会话、持久派发策略、Codex 项目白名单与固定本地内容转写器
- * [OUTPUT]: 新任务自动入队、原任务续办、后台执行与可核验成果读取
+ * [OUTPUT]: 新任务自动入队、原任务保存位置纠正与续办、后台执行与可核验成果读取
  * [POS]: 助手和执行生命周期之间的装配边界；策略不由模型自由提供，不扫描历史任务
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { realpathSync, readFileSync, lstatSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { db, dataDir, getSetting, setSetting, now } from '../db.js';
 import { codexCliAdapter } from './codex-cli-adapter.js';
 import { executionStore } from './agent-execution-store.js';
-import { createAgentExecutionRuntime, type ExecutionPolicy } from './agent-execution.js';
+import { createAgentExecutionRuntime, type ExecutionPolicy, taskSandbox } from './agent-execution.js';
 import {createStageARuntime} from './agent-stage-a-runtime.js';
 import {artifactNames} from './execution-snapshot.js';
 import { getAgentTask, type AgentTaskView } from './agent-orchestrator.js';
@@ -24,14 +25,14 @@ import { generateContentText } from './content-text.js';
 import { wakeExecution, executionSettled, executionConcurrency } from './execution-signals.js';
 import { readWeixinIdentity } from '../routes/clawbot.js';
 
-export type AgentDispatchConfig = { enabled: boolean; paused: boolean; binary: string; model: string; reviewModel: string; proxyUrl?: string;
+export type AgentDispatchConfig = { allowWorkspaceWrites?: boolean; enabled: boolean; paused: boolean; binary: string; model: string; reviewModel: string; proxyUrl?: string;
   stageA?:{enabled:boolean;owner:string;projectScope:string;projectPath?:string;accountScope:string;conversationId:string;nativeSession?:boolean;model?:string;reviewModel?:string;reasoningEffort?:'low'|'medium'|'high'};
   maxConcurrentJobs?:number; maxConcurrentContentJobs?:number; allowedFeishuConversations?: string[];
   projects: Array<{ name: string; path: string; aliases?: string[] }>; maxDailyJobs: number; deadlineMs: number; maxTokens: number };
 export const dispatchConfig = (): AgentDispatchConfig | null => getSetting<AgentDispatchConfig>('agentExecution') ?? null;
 export function executionPolicy(): ExecutionPolicy {
   const c = dispatchConfig();
-  return { enabled: c?.enabled === true, paused: c?.paused !== false, isPrimary: (process.env.WORKBENCH_DEVICE_ROLE ?? 'primary') === 'primary',
+  return { allowWorkspaceWrites: c?.allowWorkspaceWrites === true, enabled: c?.enabled === true, paused: c?.paused !== false, isPrimary: (process.env.WORKBENCH_DEVICE_ROLE ?? 'primary') === 'primary',
     allowedProjects: (c?.projects ?? []).map((p) => realpathSync(p.path)), allowedExecutors: ['codex'],
     allowedModels: c ? [...new Set([c.model, c.reviewModel])] : [], executionModel: c?.model ?? '', reviewModel: c?.reviewModel ?? '',
     accountScope: 'local-codex-account', deadlineMs: c?.deadlineMs ?? 600000, maxOutputBytes: 100000,
@@ -49,7 +50,7 @@ const stageKey=(stage:StageBinding,root:string)=>'stage-a:'+createHash('sha256')
 let runtime:ReturnType<typeof assembleDispatch>|null=null;
 function assembleDispatch(){
  const base={db,artifactRoot:join(dataDir,'agent-results'),policy:executionPolicy,onSettled:executionSettled,
-  adapter:(model:string)=>{const c=dispatchConfig()!;return codexCliAdapter({binary:c.binary,model,sandbox:'read-only',env:{...process.env,...(c.proxyUrl?{HTTPS_PROXY:c.proxyUrl,HTTP_PROXY:c.proxyUrl,ALL_PROXY:c.proxyUrl}:{})}});}};
+  adapter:(model:string,role:'execution'|'review',task?:Readonly<import('./execution-snapshot.js').ExecutionSnapshot>)=>{const c=dispatchConfig()!;const sandbox=task?taskSandbox(task,executionPolicy(),role):'read-only';return codexCliAdapter({binary:c.binary,model,sandbox,networkAccess:sandbox==='workspace-write',env:{...process.env,...(c.proxyUrl?{HTTPS_PROXY:c.proxyUrl,HTTP_PROXY:c.proxyUrl,ALL_PROXY:c.proxyUrl}:{})}});}};
  const legacy=createAgentExecutionRuntime({...base,runtimePartition:'legacy'});
  let stageRuntime:ReturnType<typeof createStageARuntime>|null=null,binding:StageBinding|null=null,partition='',root='',fingerprint='';
  const live=()=>{try{const c=dispatchConfig();return Boolean(c?.stageA?.enabled&&JSON.stringify(c.stageA)===fingerprint&&stageProject(c.stageA,c)===root);}catch{return false;}};
@@ -61,10 +62,10 @@ function assembleDispatch(){
   const frozen=binding;
   const policy=()=>{const current=dispatchConfig()!,p=executionPolicy();const executionModel=frozen.model??p.executionModel,reviewModel=frozen.reviewModel??executionModel;
    return {...p,enabled:p.enabled&&live(),allowedProjects:[root],allowedModels:[...new Set([executionModel,reviewModel])],executionModel,reviewModel,accountScope:frozen.accountScope};};
-  const adapter=(model:string,session?:Parameters<typeof codexCliAdapter>[0]['session'])=>{const current=dispatchConfig()!;return codexCliAdapter({binary:current.binary,model,reasoningEffort:frozen.reasoningEffort??'low',sandbox:'read-only',session,env:{...process.env,...(current.proxyUrl?{HTTPS_PROXY:current.proxyUrl,HTTP_PROXY:current.proxyUrl,ALL_PROXY:current.proxyUrl}:{})}});};
+  const adapter=(model:string,session?:Parameters<typeof codexCliAdapter>[0]['session'],sandbox:'read-only'|'workspace-write'='read-only')=>{const current=dispatchConfig()!;return codexCliAdapter({binary:current.binary,model,reasoningEffort:frozen.reasoningEffort??'low',sandbox,networkAccess:sandbox==='workspace-write',session,env:{...process.env,...(current.proxyUrl?{HTTPS_PROXY:current.proxyUrl,HTTP_PROXY:current.proxyUrl,ALL_PROXY:current.proxyUrl}:{})}});};
   stageRuntime=createStageARuntime({...base,policy,runtimePartition:partition,boundProjectPath:root,scope:{owner:frozen.owner,projectScope:frozen.projectScope},revisionSource:{source:'workbench',conversationId:frozen.conversationId},stageAEnabled:live,
-   adapter:(model,role,task)=>{if(role==='execution'&&(task?.source!=='workbench'||task.source_conversation_id!==frozen.conversationId||realpathSync(task.project_path)!==root))throw new Error('任务来源或项目已偏离绑定');return adapter(model);},
-   ...(frozen.nativeSession?{nativeSessionAdapter:(model:string,session:NonNullable<Parameters<typeof codexCliAdapter>[0]['session']>)=>adapter(model,session)}:{})});
+   adapter:(model,role,task)=>{if(role==='execution'&&(task?.source!=='workbench'||task.source_conversation_id!==frozen.conversationId||realpathSync(task.project_path)!==root))throw new Error('任务来源或项目已偏离绑定');return adapter(model,undefined,task?taskSandbox(task,policy(),role):'read-only');},
+   ...(frozen.nativeSession?{nativeSessionAdapter:(model:string,session:NonNullable<Parameters<typeof codexCliAdapter>[0]['session']>,task?:Readonly<import('./execution-snapshot.js').ExecutionSnapshot>)=>adapter(model,session,task?taskSandbox(task,policy()):'read-only')}:{})});
  }
  function matching(id:string){const c=dispatchConfig();if(!c?.stageA?.enabled)return false;const task=db.prepare('SELECT source,source_conversation_id,project_path FROM agent_tasks WHERE id=?').get(id) as {source:string;source_conversation_id:string;project_path:string}|undefined;
   return Boolean(task&&task.source==='workbench'&&task.source_conversation_id===c.stageA.conversationId&&task.project_path&&realpathSync(task.project_path)===stageProject(c.stageA,c));}
@@ -137,8 +138,15 @@ export function prepareAgentDispatch(id: string, contentOptions?: { noteId?: num
       contentRuntime().enqueue(id, contentOptions); wakeExecution(); return getAgentTask(id)!;
     }
     if (task.executor && task.executor !== 'codex') throw new Error(`${task.executor} 的正式执行通道尚未接通；没有改派给其他 Agent`);
-    const matches = config.projects.filter((p) => task.projectPath ? realpathSync(p.path) === task.projectPath
+    let matches = config.projects.filter((p) => task.projectPath ? realpathSync(p.path) === task.projectPath
       : [p.name, ...(p.aliases ?? [])].some((name) => name.length > 1 && task.objective.toLowerCase().includes(name.toLowerCase())));
+    // 本机工作台的项目级 Skill 安装使用应用根目录，不依赖模型碰巧写出项目名。
+    if (!matches.length && !task.projectPath && task.source === 'workbench'
+      && /(?:安装|install)/i.test(task.objective) && /(?:skill|技能)/i.test(task.objective)
+      && !/(?:全局|所有项目|global|用户级)/i.test(task.objective)) {
+      const appRoot = realpathSync(fileURLToPath(new URL('../../../', import.meta.url)));
+      matches = config.projects.filter(p => realpathSync(p.path) === appRoot);
+    }
     if (matches.length !== 1) throw new Error('需要明确一个已授权项目；当前没有唯一匹配的执行目录');
     db.prepare("UPDATE agent_tasks SET project_path=?,executor=COALESCE(executor,'codex'),supervisor='codex' WHERE id=? AND status='drafted'")
       .run(realpathSync(matches[0].path), id);
@@ -149,14 +157,40 @@ export function prepareAgentDispatch(id: string, contentOptions?: { noteId?: num
   return getAgentTask(id)!;
 }
 
+/** 仅从可信用户原文识别保存位置；否定、疑问和多个目标交回正常对话。 */
+function correctedContentDestination(text: string): string | null {
+  if (/(?:不要|不必|别|无需|不能|不想|是否|能否|吗|？|\?)/.test(text)) return null;
+  const targets = [...text.matchAll(/(?:保存|存入|存|放|写入)(?:到|进|入|在)?(?:工作台)?(随手记|任务成果)/g)].map(m => m[1]);
+  return new Set(targets).size === 1 ? targets[0] : null;
+}
+function correctDraftDestination(id: string, inbound: InboundRequest): boolean {
+  const destination = correctedContentDestination(inbound.text);
+  if (!destination) return false;
+  return db.transaction(() => {
+    const task = db.prepare("SELECT objective FROM agent_tasks WHERE id=? AND source=? AND source_conversation_id=? AND status='drafted' AND last_error='需要明确保存到随手记或任务成果'").get(id, inbound.source, inbound.sourceConversationId) as {objective:string}|undefined;
+    if (!task || db.prepare('SELECT 1 FROM content_execution_jobs WHERE task_id=?').get(id) || db.prepare('SELECT 1 FROM agent_execution_jobs WHERE task_id=?').get(id)) return false;
+    const url = videoSource(task.objective) || articleSkillSource(task.objective);
+    const urls = inbound.text.match(/https?:\/\/[^\s（()）。，；：、<>"'「」【】]+/g) ?? [];
+    if (!url || (urls.length ? urls.length !== 1 || urls[0] !== url : !/(?:这个|这条|该|原|上[一个条]+)任务|改(?:为|成)|改存|改放/.test(inbound.text))) return false;
+    const objective = task.objective.replace(/(?:保存|存入|放|写入)(?:到|进|入|在)?(?:工作台)?知识库/g, `保存到${destination}`);
+    if (objective === task.objective) return false;
+    db.prepare('UPDATE agent_tasks SET objective=?,last_error=NULL,updated_at=? WHERE id=?').run(objective, now(), id);
+    return true;
+  })();
+}
+
 /** 纯续办命令在模型前处理，严格按可信会话选最近一条；不会创建新任务或重试终态。 */
 export function continueAgentDispatch(text: string, inbound: InboundRequest): AgentTaskView | null | 'missing' {
   const normalized = text.trim().replace(/[，,。！!\s]/g, '');
+  if (correctedContentDestination(text)) {
+    const corrected = continueAgentTask({...inbound,text}, undefined, true);
+    if (corrected !== 'missing') return corrected;
+  }
   if (!/^(?:(?:好的|好|那就))?(?:直接派发(?:就行)?|确认派发|开始派发|继续执行|继续这个任务|继续上一条任务|继续|确认)(?:不用(?:再)?(?:跟我)?确认)?$/.test(normalized)) return null;
   return continueAgentTask(inbound);
 }
 /** 模型识别出的续办意图也必须引用原任务，不能通过改写目标新建任务。 */
-export function continueAgentTask(inbound: InboundRequest, id?: string): AgentTaskView | 'missing' {
+export function continueAgentTask(inbound: InboundRequest, id?: string, correctionOnly = false): AgentTaskView | 'missing' {
   if (!inbound.sourceConversationId) return 'missing';
   const sessionId = currentModelContext().sessionId;
   if (!id && sessionId) {
@@ -172,6 +206,8 @@ export function continueAgentTask(inbound: InboundRequest, id?: string): AgentTa
     .get(inbound.source, inbound.sourceConversationId, id)
     : db.prepare('SELECT id FROM agent_tasks WHERE source=? AND source_conversation_id=? ORDER BY created_at DESC,id DESC LIMIT 1')
       .get(inbound.source, inbound.sourceConversationId)) as { id: string } | undefined;
+  const corrected = row ? correctDraftDestination(row.id, inbound) : false;
+  if (correctionOnly && !corrected) return 'missing';
   return row ? prepareAgentDispatch(row.id) : 'missing';
 }
 

@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { DeliveryMethodPicker, channelLabel } from '@/components/ReminderChannelPicker';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AnimatePresence, motion } from 'motion/react';
 import {
-  AlarmClock, AlertTriangle, ArrowRight, Ban, BellOff, BellRing, Check, ChevronDown, Clock,
-  Layers, ListChecks, MessageSquare, Monitor, MoreVertical, PanelTop, Plus, Repeat, RotateCw, Search, Send, SlidersHorizontal, Smartphone,
+  AlarmClock, AlertTriangle, ArrowRight, Ban, BellOff, BellRing, ChevronDown, Clock,
+  Layers, ListChecks, MoreVertical, Plus, Repeat, RotateCw, Search, Send, SlidersHorizontal,
   X,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -14,8 +14,6 @@ import { SNOOZE_PRESETS, localIsoInput, quickTimeOptions, snoozeAt, tomorrowSame
 import { notifyDeleted } from '@/lib/trash';
 import { TaskDetailDialog } from '@/components/TaskDetailDialog';
 import { NotifyStatusChip } from '@/components/NotifyStatusChip';
-import { askNotifyPermission, openNotificationSettings } from '@/lib/notify-actions';
-import { useNotifyPermission, type NotifyPermission } from '@/lib/notify-permission';
 import { DateTimePicker } from '@/ui/datetime-picker';
 import { MenuButton, type MenuItem } from '@/ui/menu';
 import type { Reminder, ReminderChannel, ReminderPatch, Settings } from '@/types';
@@ -76,7 +74,7 @@ function scheduleDateLabel(value: string): string {
 
 /** 送达渠道选项 */
 export const CHANNEL_OPTIONS = [
-  { value: 'auto', label: '自动（应用内 + 可用通知）' },
+  { value: 'auto', label: '跟随设置' },
   { value: 'inapp', label: '只应用内' },
   { value: 'system', label: 'macOS 系统通知' },
   { value: 'feishu', label: '飞书机器人' },
@@ -134,146 +132,8 @@ function FilterMenu({ label, value, options, onChange }: {
   );
 }
 
-function isDeliveryReady(channel: ReminderChannel, permission: NotifyPermission, notify?: NotifySettings, weixinReady?: boolean): boolean {
-  if (channel === 'auto' || channel === 'inapp') return true;
-  if (channel === 'system') return permission === 'granted';
-  if (channel === 'weixin') return Boolean(weixinReady);
-  return Boolean(notify?.[channel]?.enabled);
-}
-
-function DeliveryMethodPicker({ value, onChange, permission, notify, onEnableSystem }: {
-  value: ReminderChannel;
-  onChange: (channel: ReminderChannel) => void;
-  permission: NotifyPermission;
-  notify?: NotifySettings;
-  onEnableSystem: () => void;
-}) {
-  const { data: claw } = useQuery({ queryKey: qk.clawbot, queryFn: api.clawbotStatus });
-  const weixinReady = Boolean(claw?.bound) && (notify?.weixinEnabled !== false);
-  const pushed = notify?.pushReminders === false
-    ? []
-    : [
-        notify?.feishu?.enabled ? '飞书' : null,
-        notify?.dingtalk?.enabled ? '钉钉' : null,
-        weixinReady ? '微信' : null,
-      ].filter(Boolean) as string[];
-  const autoTargets = [
-    '应用内',
-    permission === 'granted' ? '系统通知' : null,
-    ...pushed,
-  ].filter(Boolean).join('、');
-
-  const methods: Array<{
-    value: ReminderChannel;
-    name: string;
-    note: string;
-    icon: React.ReactNode;
-    ready: boolean;
-  }> = [
-    { value: 'auto', name: '自动', note: `当前送达：${autoTargets}`, icon: <BellRing />, ready: true },
-    { value: 'inapp', name: '只应用内', note: '始终可用，不依赖系统权限', icon: <PanelTop />, ready: true },
-    {
-      value: 'system',
-      name: '系统通知',
-      note: permission === 'granted' ? '通知已开启' : permission === 'denied' ? '通知被拦截' : '尚未开启',
-      icon: <Monitor />,
-      ready: permission === 'granted',
-    },
-    {
-      value: 'feishu',
-      name: '飞书',
-      note: notify?.feishu?.enabled ? '机器人推送中' : notify?.feishu?.configured ? '已配置但未启用' : '尚未配置',
-      icon: <MessageSquare />,
-      ready: Boolean(notify?.feishu?.enabled),
-    },
-    {
-      value: 'dingtalk',
-      name: '钉钉',
-      note: notify?.dingtalk?.enabled ? '机器人推送中' : notify?.dingtalk?.configured ? '已配置但未启用' : '尚未配置',
-      icon: <MessageSquare />,
-      ready: Boolean(notify?.dingtalk?.enabled),
-    },
-    {
-      value: 'weixin',
-      name: '微信 ClawBot',
-      note: claw?.bound ? (notify?.weixinEnabled === false ? '推送已关闭' : '提醒推到微信') : '尚未绑定，请先扫码绑定',
-      icon: <Smartphone />,
-      ready: weixinReady,
-    },
-  ];
-
-  return (
-    <div className="space-y-2.5">
-      <div className="grid gap-1.5 sm:grid-cols-2 lg:grid-cols-3" role="radiogroup" aria-label="送达方式">
-        {methods.map((method) => {
-          const selected = value === method.value;
-          return (
-            <button
-              key={method.value}
-              type="button"
-              role="radio"
-              aria-checked={selected}
-              aria-disabled={!method.ready}
-              onClick={() => {
-                if (method.ready) {
-                  onChange(method.value);
-                  return;
-                }
-                if (method.value === 'system') onEnableSystem();
-                else toast.info(`请先在通知设置中启用${method.name}`);
-              }}
-              className={cn(
-                'flex min-h-12 items-center gap-2 rounded-lg border px-2.5 py-2 text-left transition-colors',
-                selected
-                  ? 'border-accent/45 bg-accent-dim'
-                  : 'border-line bg-surface-1 hover:border-line-strong hover:bg-surface-2',
-                !method.ready && !selected && 'opacity-65',
-              )}
-            >
-              <span className={cn(
-                'flex size-7 shrink-0 items-center justify-center rounded-md [&_svg]:size-3.5',
-                selected ? 'bg-accent text-accent-ink' : 'bg-surface-2 text-ink-3',
-              )}>
-                {selected ? <Check /> : method.icon}
-              </span>
-              <span className="min-w-0">
-                <span className="flex items-center gap-1.5 text-xs font-medium text-ink">
-                  {method.name}
-                  <span className={cn('size-1.5 rounded-full', method.ready ? 'bg-ok' : 'bg-ink-4')} />
-                </span>
-                <span className="mt-0.5 block truncate text-[10px] text-ink-4">{method.note}</span>
-              </span>
-            </button>
-          );
-        })}
-      </div>
-
-      {permission !== 'granted' && (
-        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-warn/25 bg-warn/8 px-2.5 py-2 text-[11px] text-ink-3">
-          <BellOff className="size-3.5 shrink-0 text-warn" />
-          <span className="min-w-0 flex-1">
-            系统通知未开启，自动方式目前仍会保留应用内提醒。
-          </span>
-          {permission !== 'unsupported' && (
-            <button type="button" onClick={onEnableSystem} className="font-medium text-warn hover:underline">
-              {permission === 'denied' ? '去系统设置' : '开启通知'}
-            </button>
-          )}
-        </div>
-      )}
-
-      <div className="flex justify-end">
-        <Link to="/settings#settings-notify" className="text-[10px] text-ink-4 transition-colors hover:text-accent">
-          管理系统通知与推送通道
-        </Link>
-      </div>
-    </div>
-  );
-}
-
 export function RemindersView() {
   const qc = useQueryClient();
-  const defaultChannelApplied = useRef(false);
   const [message, setMessage] = useState('');
   const [triggerAt, setTriggerAt] = useState('');
   const [repeatRule, setRepeatRule] = useState<RepeatRule>('none');
@@ -293,26 +153,15 @@ export function RemindersView() {
     if (next.has(key)) next.delete(key); else next.add(key);
     return next;
   });
-  const { permission, refresh: refreshNotifyPermission } = useNotifyPermission();
-  const { data: claw } = useQuery({ queryKey: qk.clawbot, queryFn: api.clawbotStatus });
 
   const { data: settings } = useQuery({
     queryKey: qk.settings,
     queryFn: api.settings,
     staleTime: 60_000,
   });
-  const weixinReady = Boolean(claw?.bound) && (settings?.notify?.weixinEnabled !== false);
-  const defaultChannel = settings?.notify?.defaultChannel ?? 'auto';
-  const usableDefaultChannel = isDeliveryReady(defaultChannel, permission, settings?.notify, weixinReady) ? defaultChannel : 'auto';
   const scheduledTriggerAt = repeatRule === 'weekly'
     ? alignTriggerToWeekday(triggerAt, weeklyDay)
     : triggerAt;
-
-  useEffect(() => {
-    if (!settings || defaultChannelApplied.current) return;
-    defaultChannelApplied.current = true;
-    setChannel(usableDefaultChannel);
-  }, [settings, usableDefaultChannel]);
 
   const { data: reminders, isLoading } = useQuery({
     queryKey: qk.reminders,
@@ -325,9 +174,9 @@ export function RemindersView() {
   const createMut = useMutation({
     mutationFn: () => api.createReminder({ message: message.trim(), triggerAt: scheduledTriggerAt, repeatRule, channel }),
     onSuccess: () => {
-      setMessage(''); setTriggerAt(''); setRepeatRule('none'); setChannel(usableDefaultChannel); setDeliveryOpen(false);
+      setMessage(''); setTriggerAt(''); setRepeatRule('none'); setChannel('auto'); setDeliveryOpen(false);
       toast.success('提醒已就位', {
-        description: `送达方式：${CHANNEL_SHORT[channel] ?? channel}`,
+        description: `送达方式：${channelLabel(channel)}`,
       });
       invalidate();
     },
@@ -394,7 +243,7 @@ export function RemindersView() {
       if (statusFilter === 'done' && r.status !== 'done') return false;
       if (repeatFilter === 'repeat' && r.repeat_rule === 'none') return false;
       if (repeatFilter === 'once' && r.repeat_rule !== 'none') return false;
-      if (channelFilter !== 'all' && (r.channel ?? 'auto') !== channelFilter) return false;
+      if (channelFilter !== 'all' && !(r.channel ?? 'auto').split(',').includes(channelFilter)) return false;
       if (linkedFilter === 'linked' && !r.linked_task_id) return false;
       if (linkedFilter === 'unlinked' && r.linked_task_id) return false;
       if (kw && !`${r.message}\n${r.task_title ?? ''}`.toLowerCase().includes(kw)) return false;
@@ -490,17 +339,6 @@ export function RemindersView() {
     if (message.trim() && triggerAt && !createMut.isPending) createMut.mutate();
   };
 
-  const enableSystemNotifications = async () => {
-    if (permission === 'denied') {
-      openNotificationSettings();
-      return;
-    }
-    if (permission === 'default') {
-      await askNotifyPermission();
-      refreshNotifyPermission();
-    }
-  };
-
   const hasActiveFilters = Boolean(search.trim()) || statusFilter !== 'all' || repeatFilter !== 'all'
     || channelFilter !== 'all' || linkedFilter !== 'all';
 
@@ -516,12 +354,10 @@ export function RemindersView() {
       tone={opts?.danger ? 'danger' : 'normal'}
       onComplete={(completeOpts) => completeMut.mutate({ id: r.id, ...completeOpts })}
       onSnooze={(triggerAt) => snoozeMut.mutate({ id: r.id, triggerAt })}
-      onSave={(patch) => editMut.mutate({ id: r.id, patch })}
+      onSave={(patch) => editMut.mutateAsync({ id: r.id, patch })}
       onResend={() => resendMut.mutate(r.id)}
       busy={busyId(r.id, completeMut, snoozeMut, editMut, resendMut, stopSeriesMut, dedupeMut)}
-      permission={permission}
       notify={settings?.notify}
-      onEnableSystem={() => { void enableSystemNotifications(); }}
       onDelete={() => deleteMut.mutate(r.id)}
       seriesCount={r.series_id ? seriesCounts.get(r.series_id) : undefined}
       dupCount={dupCounts.get(r.id)}
@@ -598,7 +434,7 @@ export function RemindersView() {
                 className="ml-auto flex h-8 items-center gap-1.5 rounded-md px-2 text-[11px] text-ink-3 transition-colors hover:bg-surface-2 hover:text-ink-2"
               >
                 <SlidersHorizontal className="size-3.5" />
-                送达方式：{CHANNEL_SHORT[channel] ?? channel}
+                送达方式：{channelLabel(channel)}
                 <ChevronDown className={cn('size-3 transition-transform', deliveryOpen && 'rotate-180')} />
               </button>
             </div>
@@ -684,9 +520,7 @@ export function RemindersView() {
                     <DeliveryMethodPicker
                       value={channel}
                       onChange={setChannel}
-                      permission={permission}
                       notify={settings?.notify}
-                      onEnableSystem={() => { void enableSystemNotifications(); }}
                     />
                   </div>
                 </motion.div>
@@ -907,7 +741,8 @@ function DeliveryBadge({ reminder: r, onResend, busy }: {
 }) {
   const status = r.delivery_status ?? 'none';
   // none=还没到点，pending=正在发，skipped=只应用内（网页端自己会弹），这几种都不值得占地方
-  if (status === 'none' || status === 'pending' || status === 'skipped') return null;
+  if (status === 'none' || status === 'pending') return null;
+  if (status === 'skipped') return r.channel_note ? <span className="text-[10px] text-warn" title={r.channel_note}>外部未发送 · 应用内提醒</span> : null;
 
   const note = r.channel_note ? `\n${r.channel_note}` : '';
 
@@ -915,10 +750,10 @@ function DeliveryBadge({ reminder: r, onResend, busy }: {
     const sent = (r.delivered_channels ?? '').split(',').filter(Boolean);
     return (
       <span
-        className="flex shrink-0 items-center gap-1 text-[10px] text-ok"
+        className={cn("flex shrink-0 items-center gap-1 text-[10px]", r.channel_note ? "text-warn" : "text-ok")}
         title={`已送达：${sent.map((c) => DELIVERY_LABEL[c] ?? c).join('、') || '—'}${r.last_delivery_at ? ` · ${fmtDateTime(r.last_delivery_at)}` : ''}${note}`}
       >
-        <Send className="size-2.5" /> 已送达
+        <Send className="size-2.5" /> {r.channel_note ? '部分渠道未发送' : '已送达'}
       </span>
     );
   }
@@ -932,7 +767,7 @@ function DeliveryBadge({ reminder: r, onResend, busy }: {
         title={`${r.delivery_error ?? '发送失败'}${willRetry && r.next_retry_at ? `\n将在 ${fmtTime(r.next_retry_at)} 自动重试` : `\n已重试 ${attempts} 次仍未成功，可手动重发`}${note}`}
       >
         <AlertTriangle className="size-2.5" />
-        {willRetry ? `送达失败 · ${fmtTime(r.next_retry_at!)}重试` : '送达失败'}
+        {r.delivered_channels ? '部分送达 · ' : ''}{willRetry ? `送达失败 · ${fmtTime(r.next_retry_at!)}重试` : '送达失败'}
       </span>
       {onResend && (
         <Button size="xsIcon" variant="ghost" title="重新发送" onClick={(e) => { e.stopPropagation(); onResend(); }} disabled={busy}>
@@ -980,9 +815,7 @@ function RemRow({
   onSave,
   onResend,
   busy,
-  permission,
   notify,
-  onEnableSystem,
   onDelete,
   seriesCount,
   dupCount,
@@ -997,13 +830,11 @@ function RemRow({
   /** 稍后提醒：把这条回到待触发，不产生新实例 */
   onSnooze?: (triggerAt: string) => void;
   /** 保存编辑（只传改动过的字段） */
-  onSave?: (patch: ReminderPatch) => void;
+  onSave?: (patch: ReminderPatch) => Promise<unknown>;
   /** 手动重发一次到点通知（送达失败后） */
   onResend?: () => void;
   busy?: boolean;
-  permission?: NotifyPermission;
   notify?: NotifySettings;
-  onEnableSystem?: () => void;
   onDelete: () => void;
   /** 同一系列的期数（含本条）；>1 才显示系列徽章 */
   seriesCount?: number;
@@ -1079,7 +910,7 @@ function RemRow({
     },
   ];
 
-  const submitEdit = () => {
+  const submitEdit = async () => {
     if (!onSave) return;
     const patch: ReminderPatch = {};
     const message = draft.message.trim();
@@ -1089,8 +920,10 @@ function RemRow({
     if (draft.repeatRule !== r.repeat_rule) patch.repeatRule = draft.repeatRule;
     if (draft.channel !== (r.channel ?? 'auto')) patch.channel = draft.channel;
     if (Object.keys(patch).length === 0) { setEditing(false); return; }
-    onSave(patch);
-    setEditing(false);
+    try {
+      await onSave(patch);
+      setEditing(false);
+    } catch { /* mutation 提示错误；保留编辑面板与渠道草稿 */ }
   };
 
   const confirmCopy = confirming
@@ -1169,7 +1002,7 @@ function RemRow({
 
         {!muted && r.channel && r.channel !== 'auto' && (
           <span className="shrink-0 text-[10px] text-ink-4">
-            {CHANNEL_SHORT[r.channel] ?? r.channel}
+            {channelLabel(r.channel)}
           </span>
         )}
 
@@ -1309,14 +1142,12 @@ function RemRow({
                 </p>
               )}
 
-              {permission && onEnableSystem && (
+              {!muted && (
                 <div className="border-t border-line pt-2.5">
                   <DeliveryMethodPicker
                     value={draft.channel}
                     onChange={(channel) => setDraft((d) => ({ ...d, channel }))}
-                    permission={permission}
                     notify={notify}
-                    onEnableSystem={onEnableSystem}
                   />
                 </div>
               )}

@@ -12,16 +12,16 @@ import type { AgentTask } from '@/lib/assistant-runtime';
 
 // 阶段②包1：任务全过程事实链（含内容线）的中文标签与单行摘要。
 const EVENT_LABELS: Record<string, string> = {
-  ready_to_dispatch: '已登记，等待领取', executing: '开始执行', execution: '执行过程', execution_result: '本轮执行完成',
+  ready_to_dispatch: '已登记，等待领取', executing: '开始执行', execution: '执行过程', execution_result: '本轮执行返回',
   review_result: '验收完成', pending_review: '提交独立验收', completed: '已交付', needs_human: '需要人工处理',
   blocked: '受阻', content_ready: '内容任务已登记', content_transcript: '转写/读取完成', content_note_saved: '成果已保存',
   content_failed: '处理失败', state_conflict: '状态冲突已隔离', switch_executor: '换执行者接手',
 };
 type TaskEvent = { id: number; kind: string; createdAt: string; detail: Record<string, unknown> };
 const eventLine = (e: TaskEvent) => {
-  const time = e.createdAt.replace('T', ' ').slice(5, 19);
+  const time = new Date(e.createdAt).toLocaleTimeString('zh-CN', { hour12: false });
   const label = EVENT_LABELS[e.kind] ?? e.kind;
-  const d = e.detail as { error?: unknown; attempt?: unknown; observedModel?: unknown; chars?: unknown; title?: unknown; noteId?: unknown; from?: unknown; to?: unknown; usage?: unknown };
+  const d = e.detail as { error?: unknown; message?: unknown; exitCode?: unknown; attempt?: unknown; observedModel?: unknown; chars?: unknown; title?: unknown; noteId?: unknown; from?: unknown; to?: unknown; usage?: unknown };
   const bits: string[] = [];
   if (typeof d.attempt === 'number') bits.push(`第 ${d.attempt} 轮`);
   if (typeof d.title === 'string' && d.title) bits.push(`《${d.title}》`);
@@ -30,7 +30,12 @@ const eventLine = (e: TaskEvent) => {
   if (d.usage && typeof d.usage === 'object') { const u = d.usage as { inputTokens?: unknown; outputTokens?: unknown }; if (typeof u.inputTokens === 'number' && typeof u.outputTokens === 'number') bits.push(`用量 ${u.inputTokens}+${u.outputTokens} token`); }
   if (typeof d.noteId === 'number') bits.push(`笔记 #${d.noteId}`);
   if (typeof d.from === 'string' && typeof d.to === 'string') bits.push(`${d.from} → ${d.to}`);
-  if (typeof d.error === 'string' && d.error) bits.push(d.error.slice(0, 160));
+  if (typeof d.error === 'string' && d.error) bits.push(d.error);
+  if (typeof d.message === 'string' && d.message) {
+    const messages: Record<string,string> = { command_execution: '执行本机操作', mcp_tool_call: '调用外部工具', web_search: '检索网页', agent_message: '返回执行说明', file_change: '修改项目文件', error: '执行器报告错误' };
+    if (!d.message.startsWith('{')) bits.push(messages[d.message] ?? d.message);
+  }
+  if (typeof d.exitCode === 'number' && d.exitCode !== 0) bits.push(`操作退出码 ${d.exitCode}`);
   return `${time} · ${label}${bits.length ? '：' + bits.join(' · ') : ''}`;
 };
 
@@ -53,15 +58,17 @@ export function AgentTaskDetail({ task }: { task: AgentTask }) {
   const result = useQuery({ queryKey: ['assistant-agent-result', task.id, task.updatedAt], queryFn: () => api.assistantAgentResult(task.id), enabled: showResult, retry: false });
   // S20 阶段用量：未知尝试不记 0，也不把已报告合计当成费用或供应商硬封顶。
   const taskUsage = useQuery({ queryKey: ['agent-task-usage', task.id, task.updatedAt], queryFn: () => api.assistantAgentTaskUsage(task.id), enabled: open, retry: false });
-  const taskEvents = useQuery({ queryKey: ['agent-task-events', task.id, task.updatedAt], queryFn: () => api.assistantAgentTaskEvents(task.id), enabled: open, retry: false });
+  const running = ['executing', 'pending_review', 'dispatched', 'acknowledged'].includes(task.status);
+  const taskEvents = useQuery({ queryKey: ['agent-task-events', task.id, task.updatedAt], queryFn: () => api.assistantAgentTaskEvents(task.id), enabled: open || running, refetchInterval: running ? 5000 : false, retry: false });
+  const latestEvent = taskEvents.data?.events?.[0];
   const stageTokens = (stage: 'execution' | 'review') => taskUsage.data?.usage.attempts.filter((a) => a.stage === stage && a.reported).reduce((n, a) => n + (a.inputTokens ?? 0) + (a.outputTokens ?? 0), 0) ?? null;
   return <details data-agent-detail className="rounded-xl border border-line bg-surface-1 p-3 text-xs" onToggle={e=>{
     const element=e.currentTarget;setOpen(element.open);
     if(element.open)document.querySelectorAll<HTMLDetailsElement>('details[data-agent-detail]').forEach(other=>{if(other!==element)other.open=false;});
   }}>
-    <summary className="cursor-pointer break-words text-ink"><span className="mr-2 rounded bg-surface-2 px-1.5 py-0.5 text-ink-2">{task.statusLabel ?? '状态待核对'}</span>{task.objective}</summary>
+    <summary className="cursor-pointer break-words text-ink"><span className="mr-2 rounded bg-surface-2 px-1.5 py-0.5 text-ink-2">{task.statusLabel ?? '状态待核对'}</span>{task.objective}{running && latestEvent && <span className="mt-1 block text-[11px] font-normal text-ink-3">最近进展 · {eventLine(latestEvent)}</span>}{!running && ['needs_human','failed','blocked'].includes(task.status) && <span className="mt-1 block whitespace-pre-wrap text-[11px] font-normal text-warn">{task.statusDetail?.split('\n')[0]}</span>}</summary>
     <div className="mt-3 space-y-2 break-words text-ink-3">
-      <p>{task.statusDetail}</p>
+      <p className="whitespace-pre-wrap">{task.statusDetail}</p>
       <p>任务编号：{task.id}</p>
       {actions.data&&<p>第 {actions.data.attempt} 轮{actions.data.notificationState==='unknown'?' · 通知送达待核对':''}</p>}
       {actions.data?.conversationId&&<a className="inline-block text-accent underline" href={`/assistant?session=${encodeURIComponent(actions.data.conversationId)}`}>回到任务对话</a>}

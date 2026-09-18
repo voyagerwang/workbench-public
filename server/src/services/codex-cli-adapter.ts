@@ -10,7 +10,7 @@ import {realpathSync} from 'node:fs';
 export type CodexSessionOption={mode:'create';projectRoot:string}|{mode:'resume';projectRoot:string;id:string};
 
 /** 配置只能由服务端装配，不能使用模型或 HTTP 自由传入的命令/参数。 */
-export function codexCliAdapter(config: { binary: string; model: string; env?: NodeJS.ProcessEnv; sandbox?: 'read-only' | 'workspace-write'; reasoningEffort?:'low'|'medium'|'high';session?:CodexSessionOption }): ExecutorAdapter {
+export function codexCliAdapter(config: { binary: string; model: string; env?: NodeJS.ProcessEnv; networkAccess?: boolean; sandbox?: 'read-only' | 'workspace-write'; reasoningEffort?:'low'|'medium'|'high';session?:CodexSessionOption }): ExecutorAdapter {
   const sandbox = config.sandbox ?? 'workspace-write';
   const session=config.session?Object.freeze({...config.session,projectRoot:realpathSync(config.session.projectRoot)}):undefined;
   if(session?.mode==='resume'&&!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(session.id))throw new Error('续接必须指定有效会话UUID');
@@ -55,7 +55,8 @@ export function codexCliAdapter(config: { binary: string; model: string; env?: N
         }
       };
       let warned = false;
-      const shared=['--ignore-user-config','--skip-git-repo-check','--model',config.model,'--json',
+      // 保留用户实际登录对应的 provider/base_url；沙箱与模型仍由服务端参数显式固定。
+      const shared=[...(sandbox==='workspace-write'&&config.networkAccess?['-c','sandbox_workspace_write.network_access=true']:[]),'--skip-git-repo-check','--model',config.model,'--json',
         ...(config.reasoningEffort?['-c',`model_reasoning_effort="${config.reasoningEffort}"`]:[])];
       const args=session?.mode==='resume'
         ?['exec','--sandbox',sandbox,'--cd',projectRoot,'resume',...shared,session.id,'-']

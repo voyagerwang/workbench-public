@@ -11,8 +11,9 @@ import { isWeixinReady, sendClawbotMessage } from '../routes/clawbot.js';
 
 export type NotifyChannelKind = 'dingtalk' | 'feishu';
 
-/** 提醒送达渠道：auto=系统通知兜底+已启用推送；inapp=只应用内；其余为定向单渠道 */
-export type ReminderChannel = 'auto' | 'inapp' | 'system' | 'feishu' | 'dingtalk' | 'weixin';
+/** 提醒送达渠道：auto=跟随默认设置；其余为单渠道或规范化多选组合 */
+export type { ReminderChannel } from './reminder-channels.js';
+import type { ReminderChannel } from './reminder-channels.js';
 
 export interface NotifyChannel {
   webhook: string;
@@ -91,8 +92,8 @@ export function notifyStatus() {
     if (c.webhook) {
       try {
         const u = new URL(c.webhook);
-        const tail = u.search.slice(0, 10).replace(/^\?/, '');
-        hint = `${u.host}${u.pathname}${tail ? `?${tail.slice(0, 4)}…` : ''}`;
+        // 飞书 token 位于路径，钉钉 token 位于 query；两者都不回显。
+        hint = `${u.host}/…`;
       } catch {
         hint = '链接格式无法解析';
       }
@@ -103,6 +104,7 @@ export function notifyStatus() {
     prefix: s.prefix?.trim() || 'YZ工作台',
     pushReminders: s.pushReminders !== false,
     defaultChannel: s.defaultChannel ?? 'auto',
+    weixinEnabled: s.weixinEnabled !== false,
     systemSupported: systemNotifySupported,
     dingtalk: one(s.dingtalk),
     feishu: one(s.feishu),

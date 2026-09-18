@@ -310,7 +310,8 @@ export interface KnowledgeAuthorizationJob {
   startedAt: number;
 }
 
-export type ReminderChannel = 'auto' | 'inapp' | 'system' | 'feishu' | 'dingtalk' | 'weixin';
+export type SingleReminderChannel = 'inapp' | 'system' | 'feishu' | 'dingtalk' | 'weixin';
+export type ReminderChannel = 'auto' | SingleReminderChannel | `${SingleReminderChannel},${string}`;
 
 /** 创建/修改提醒时可写的字段，与后端 zod 契约一致 */
 export type ReminderPatch = {
@@ -333,7 +334,7 @@ export interface Reminder {
   trigger_at: string;
   repeat_rule: RepeatRule;
   status: 'pending' | 'fired' | 'done';
-  /** 送达渠道：auto=系统通知兜底+已启用推送；inapp=只应用内 */
+  /** 送达渠道：auto=跟随设置；其余为单渠道或逗号分隔多选组合 */
   channel?: ReminderChannel;
   fired_at: string | null;
   created_at: string;
@@ -417,7 +418,7 @@ export interface Settings {
   notify?: {
     prefix: string;
     pushReminders: boolean;
-    defaultChannel?: 'auto' | 'inapp' | 'system' | 'feishu' | 'dingtalk' | 'weixin';
+    defaultChannel?: ReminderChannel;
     weixinEnabled?: boolean;
     systemSupported?: boolean;
     dingtalk: NotifyChannelStatus;

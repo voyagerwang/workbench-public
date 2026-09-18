@@ -666,19 +666,6 @@ export function AssistantConversation({
               )}
             </div>
 
-            {/* 本地缓存里有、服务端还没确认的消息：如实标注，并给一键重试 */}
-            {message.tempId && (
-              <button
-                type="button"
-                disabled={pending}
-                onClick={() => void retryMessage(index)}
-                className="mt-0.5 flex items-center gap-1 text-[10px] text-warn hover:underline disabled:opacity-50"
-              >
-                <RotateCcw className={cn('size-3', pending && 'animate-spin')} />
-                未同步到工作台，点击重试
-              </button>
-            )}
-
             {/* 凭证卡独立于回答渲染：模型的话术不能代表落库结果 */}
             {message.receipt && (
               <div className="mt-1 w-full">

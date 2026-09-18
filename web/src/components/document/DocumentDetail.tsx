@@ -1,12 +1,12 @@
 /**
  * [INPUT]: 文档会话、业务属性/操作插槽和助手身份；沿用 DocumentEditor
- * [OUTPUT]: DocumentDetail 完整详情页、DocumentProperty 属性行
+ * [OUTPUT]: DocumentDetail 完整详情页、可选的一键复制 Markdown、DocumentProperty 属性行
  * [POS]: 随手记、清单与知识资料唯一页面实现；正文随容器铺满宽度，业务差异由适配组件注入
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useMemo, useRef, useState, type ReactNode } from 'react';
 import type { Editor } from '@tiptap/react';
-import { Check, Loader2, Maximize2, Minimize2, MoreHorizontal, RotateCw, Sparkles, X, Link2, type LucideIcon } from 'lucide-react';
+import { Check, Copy, Loader2, Maximize2, Minimize2, MoreHorizontal, RotateCw, Sparkles, X, Link2, type LucideIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { DocumentEditor } from '@/components/DocumentEditor';
 import { createSpaceAssistantExtension } from '@/components/SpaceAssistantExtension';
@@ -26,12 +26,12 @@ export function DocumentProperty({ icon: Icon, label, children }: { icon: Lucide
   </div>;
 }
 export function DocumentDetail({ session, mode = 'embedded', label, properties, secondaryProperties, actions = [],
-  onClose, titleRequired = false, editable = true, context, getAssistantIdentity, getLink, onTitleEdited,
+  onClose, titleRequired = false, editable = true, context, getAssistantIdentity, getLink, onTitleEdited, copyMarkdown = false,
 }: {
   session: DocumentSession; mode?: DetailMode; label: string; properties?: ReactNode; secondaryProperties?: ReactNode;
   actions?: MenuItem[]; onClose: () => void; titleRequired?: boolean; editable?: boolean;
   context: AssistantContext; getAssistantIdentity: () => Promise<{ sessionKey: string; context: AssistantContext }>;
-  getLink?: () => string | null; onTitleEdited?: () => void;
+  getLink?: () => string | null; onTitleEdited?: () => void; copyMarkdown?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [anchor, setAnchor] = useState<AssistantAnchor | null>(null);
@@ -68,6 +68,14 @@ export function DocumentDetail({ session, mode = 'embedded', label, properties, 
         </span>
         {session.status === 'error' && <Button title="重试保存" variant="ghost" size="xsIcon" onClick={() => void session.flush().catch((error) => toast.error(error.message))}><RotateCw /></Button>}
         {editable && <Button title={`叫来${petName}`} variant="ghost" size="xsIcon" disabled={blocked} onClick={() => { if (editor.current) openRef.current(editor.current); }}><Sparkles /></Button>}
+        {copyMarkdown && <Button title="复制 MD 文档" aria-label="复制 MD 文档" variant="ghost" size="xsIcon" disabled={session.uploading} onClick={() => void (async () => {
+          const body = editor.current && !editor.current.isDestroyed ? editor.current.storage.markdown.getMarkdown() : session.value.body;
+          const title = session.value.title.trim().replace(/\s*\n\s*/g, ' ').replace(/([\\`*_{}\[\]<>])/g, '\\$1');
+          const markdown = [title ? `# ${title}` : '', body].filter(Boolean).join('\n\n');
+          if (!navigator.clipboard?.writeText) throw new Error('当前环境无法访问剪贴板，请使用 localhost 或 HTTPS 打开');
+          await navigator.clipboard.writeText(markdown);
+          toast.success('已复制 MD 文档');
+        })().catch((error) => toast.error(`复制失败：${error instanceof Error ? error.message : '请检查剪贴板权限'}`))}><Copy /></Button>}
         {getLink && <Button title="复制文档链接" variant="ghost" size="xsIcon" onClick={() => void (async () => {
           await session.flush(); const link = getLink(); if (!link) throw new Error('写下正文后再复制链接');
           await navigator.clipboard.writeText(new URL(link, window.location.origin).href); toast.success('已复制文档链接');

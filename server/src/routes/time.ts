@@ -1,6 +1,7 @@
 // 提醒、日历事件路由
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
+import { reminderChannelSchema } from '../services/reminder-channels.js';
 import { db, getSetting, newId, now, setSetting } from '../db.js';
 import { getConfiguredFlag, syncEvents } from '../services/dingtalk.js';
 import { createDingtalkEvent, getMcpFlag, queryAvailableRooms, queryBusyStatus, searchColleagues, suggestEventTimes } from '../services/dingtalk-mcp.js';
@@ -90,8 +91,6 @@ export default async function timeRoutes(app: FastifyInstance) {
       ORDER BY r.status = 'pending' DESC, r.trigger_at ASC LIMIT 500`,
   ).all());
 
-  const reminderChannelSchema = z.enum(['auto', 'inapp', 'system', 'feishu', 'dingtalk']);
-
   app.post('/api/reminders', (req) => {
     const b = z.object({
       message: z.string().trim().min(1).max(500),
@@ -99,7 +98,7 @@ export default async function timeRoutes(app: FastifyInstance) {
       repeatRule: repeatRuleSchema.default('none'),
       channel: reminderChannelSchema.optional(),
     }).parse(req.body);
-    // 没显式选渠道就用设置里的「默认送达渠道」，否则那条设置对所有自动创建的入口都不生效
+    // 未显式选择保存 auto，触发时统一读取默认渠道，避免设置修改后旧提醒不联动
     const channel = resolveReminderChannel(b.channel);
     // 重复提醒分配系列标识：同一系列的各期共享（下一期由调度器继承），前端据此归组
     const seriesId = b.repeatRule !== 'none' ? String(newId()) : null;

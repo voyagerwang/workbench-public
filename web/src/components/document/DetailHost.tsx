@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 文档页内容、容器模式与已受保存保护的关闭回调
  * [OUTPUT]: DetailHost 及展开状态标记，嵌入、侧开和全页共用同一个 React 子树
- * [POS]: 管理尺寸、实色背景、焦点和 Escape，不持有正文或保存状态
+ * [POS]: 管理尺寸、实色背景、焦点和 Escape；编辑器 portal 操作归属详情内部，不持有正文或保存状态
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useEffect, useRef, useState, type ReactNode, type PointerEvent } from 'react';

@@ -15,11 +15,11 @@ const embedded = typeof window !== 'undefined' && window.self !== window.top;
 const canJump = Boolean(notifySettingsUrl());
 
 const META: Record<NotifyPermission, { label: string; tip: string; tone: string }> = {
-  granted: { label: '通知已开启', tip: '到点弹系统横幅 · 点开可测试或去设置', tone: 'border-ok/35 bg-ok/12 text-ok' },
-  default: { label: '开启通知', tip: '先查看用途与范围；不授权也有应用内横幅', tone: 'border-line-strong text-ink-2' },
-  denied: { label: '通知被拦', tip: '浏览器记住了拦截 · 点开看怎么改', tone: 'border-warn bg-warn/15 text-warn' },
+  granted: { label: '浏览器通知权限已开启', tip: '仅表示浏览器权限，不代表群机器人已配置或 macOS 通知已送达', tone: 'border-ok/35 bg-ok/12 text-ok' },
+  default: { label: '开启浏览器通知', tip: '先查看用途与范围；不授权也有应用内横幅', tone: 'border-line-strong text-ink-2' },
+  denied: { label: '浏览器通知权限被拦截', tip: '浏览器记住了拦截 · 点开看怎么改', tone: 'border-warn bg-warn/15 text-warn' },
   unsupported: {
-    label: '这里弹不了系统通知',
+    label: '当前窗口不支持浏览器通知',
     tip: embedded ? '工作台被内嵌在别的页面里，宿主没让出通知权限' : '当前窗口没有 Web Notification 接口',
     tone: 'border-line-strong text-ink-3',
   },
@@ -124,16 +124,16 @@ function NotifyPanel({ permission, anchor, onClose }: {
       {permission === 'default' && (
         <>
           <Note>
-            用途：只在提醒到点时显示系统横幅。不会读取通讯录、文件、位置或剪贴板；拒绝后应用内提醒仍然可用。点下面按钮后，系统才会弹出授权窗口。
+            此权限用于当前浏览器显示通知，不会启用飞书、钉钉或微信。macOS 提醒渠道由本机服务发送；浏览器权限不代表它已获得系统授权。
           </Note>
           <Row icon={<BellRing className="size-3.5" />} onClick={pick(() => { void askNotifyPermission(); })}>
-            继续，允许系统通知
+            允许浏览器通知
           </Row>
         </>
       )}
       {permission === 'granted' && (
         <>
-          <Row icon={<Send className="size-3.5" />} onClick={pick(testSystemNotification)}>发一条测试通知</Row>
+          <Row icon={<Send className="size-3.5" />} onClick={pick(testSystemNotification)}>测试浏览器通知</Row>
           <SettingsRow onJump={pick(openNotificationSettings)} />
           <Note>权限按站点记：{site}。横幅老是被系统吞掉的话，去「{notifySettingsShortPath()}」里允许当前 App。</Note>
         </>

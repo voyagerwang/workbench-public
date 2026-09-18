@@ -41,32 +41,32 @@ export function NotifyChannelsCard() {
   const qc = useQueryClient();
   const { data: settings } = useQuery({ queryKey: qk.settings, queryFn: api.settings });
   const notify = settings?.notify;
-  const pushReminders = notify?.pushReminders ?? true;
 
   const save = useMutation({
     mutationFn: (b: Record<string, unknown>) => api.saveSettings({ notify: b }),
-    onSuccess: () => { toast.success('已保存'); qc.invalidateQueries({ queryKey: qk.settings }); },
+    onSuccess: (saved) => { toast.success('已保存'); qc.setQueryData(qk.settings, saved); return qc.invalidateQueries({ queryKey: qk.settings }); },
     onError: (e) => toast.error(e.message),
   });
+
+  const pushReminders = save.isPending && typeof save.variables?.pushReminders === 'boolean'
+    ? save.variables.pushReminders : notify?.pushReminders ?? true;
 
   const enabledCount = CHANNELS.filter((c) => notify?.[c.key]?.enabled).length;
 
   return (
-    <Card>
+    <div id="settings-notify-channels" className="scroll-mt-28"><Card>
       <CardHeader>
-        <CardTitle><BellRing className="size-4 text-accent" /> 钉钉 / 飞书推送</CardTitle>
+        <CardTitle><BellRing className="size-4 text-accent" /> 通知渠道配置</CardTitle>
         <span className={cn(
           'rounded-full border px-2 py-px text-[10px]',
           enabledCount ? 'border-ok/25 bg-ok/10 text-ok' : 'border-line text-ink-3',
         )}>
-          {enabledCount ? `已启用 ${enabledCount} 个通道` : '未启用'}
+          {enabledCount ? `已启用 ${enabledCount} 个群机器人` : '未启用'}
         </span>
       </CardHeader>
       <CardBody className="space-y-5 p-5">
         <p className="text-xs leading-relaxed text-ink-3">
-          到点提醒会顺手推到群里，人不在电脑前也不会漏。Webhook 与密钥只写进本机
-          <code className="mx-1 font-mono text-[11px] text-ink-2">data/workbench.db</code>
-          ，页面不回填明文；只想在本机安静用的话，把两个通道都关掉即可。
+          钉钉和飞书可同时启用。各渠道保存配置后，在上方选择默认送达方式；微信在下方扫码绑定。
         </p>
 
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
@@ -79,25 +79,27 @@ export function NotifyChannelsCard() {
           )}>
             <input
               type="checkbox"
+              disabled={save.isPending}
               checked={pushReminders}
               onChange={(e) => save.mutate({ pushReminders: e.target.checked })}
               className="size-3.5 accent-[var(--color-accent)]"
             />
-            到点提醒推过去
+            允许外部提醒推送（含微信）
           </label>
         </div>
 
+        {!pushReminders && <p className="text-xs text-warn">外部提醒推送已暂停，跟随设置和自定义提醒均不会发送到飞书、钉钉或微信。</p>}
         {CHANNELS.map((c) => (
           <ChannelRow
             key={c.key}
             meta={c}
             status={notify?.[c.key]}
             busy={save.isPending}
-            onSave={(b) => save.mutate({ [c.key]: b })}
+            onSave={async (b) => { await save.mutateAsync({ [c.key]: b }); }}
           />
         ))}
       </CardBody>
-    </Card>
+    </Card></div>
   );
 }
 
@@ -126,7 +128,7 @@ function ChannelRow({
   meta: (typeof CHANNELS)[number];
   status?: NotifyChannelStatus;
   busy: boolean;
-  onSave: (b: Record<string, unknown>) => void;
+  onSave: (b: Record<string, unknown>) => Promise<void>;
 }) {
   const [webhook, setWebhook] = useState('');
   const [secret, setSecret] = useState('');
@@ -142,10 +144,12 @@ function ChannelRow({
     onError: (e) => toast.error(`${meta.name} 发送失败`, { description: e.message }),
   });
 
-  const saveThis = (b: Record<string, unknown>) => {
-    onSave(b);
-    setWebhook('');
-    setSecret('');
+  const saveThis = async (b: Record<string, unknown>) => {
+    try {
+      await onSave(b);
+      setWebhook('');
+      setSecret('');
+    } catch { /* 错误由保存 mutation 提示，保留用户输入重试 */ }
   };
 
   const dirty = Boolean(webhook.trim() || secret.trim());
@@ -156,7 +160,7 @@ function ChannelRow({
   };
 
   return (
-    <div className="space-y-3 rounded-xl border border-line bg-surface-2/50 p-4">
+    <div id={`settings-notify-${meta.key}`} className="scroll-mt-28 space-y-3 rounded-xl border border-line bg-surface-2/50 p-4">
       <div className="flex flex-wrap items-center gap-2">
         <p className="flex items-center gap-1.5 text-sm font-medium">
           <MessageSquare className="size-3.5 text-accent" /> {meta.name}
@@ -165,7 +169,7 @@ function ChannelRow({
           'rounded-full border px-1.5 py-px text-[10px]',
           status?.enabled ? 'border-ok/25 bg-ok/10 text-ok' : configured ? 'border-line text-ink-3' : 'border-line text-ink-4',
         )}>
-          {status?.enabled ? '推送中' : configured ? '已保存 · 未启用' : '未配置'}
+          {status?.enabled ? '已启用' : configured ? '已保存 · 未启用' : '未配置'}
         </span>
         {status?.hasSecret && <span className="text-[10px] text-ink-4">已带密钥</span>}
       </div>
@@ -173,6 +177,8 @@ function ChannelRow({
 
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1.4fr_1fr]">
         <Input
+          aria-label={`${meta.name} Webhook`}
+          disabled={busy}
           value={webhook}
           onChange={(e) => setWebhook(e.target.value)}
           placeholder={configured && status?.hint ? `已保存：${status.hint}（粘贴新地址覆盖）` : meta.webhookPlaceholder}
@@ -181,6 +187,8 @@ function ChannelRow({
         />
         <Input
           type="password"
+          aria-label={`${meta.name}密钥`}
+          disabled={busy}
           value={secret}
           onChange={(e) => setSecret(e.target.value)}
           placeholder={status?.hasSecret ? '••••••••（留空不改）' : meta.secretLabel}
@@ -194,7 +202,7 @@ function ChannelRow({
         <Button
           size="sm"
           variant="primary"
-          disabled={busy || !dirty}
+          disabled={busy || !dirty || (!configured && !webhook.trim())}
           onClick={() => saveThis({ ...patch, enabled: true })}
         >
           <Save /> {configured ? '更新并启用' : '保存并启用'}
@@ -204,7 +212,7 @@ function ChannelRow({
             size="sm"
             variant="secondary"
             disabled={busy}
-            onClick={() => onSave({ enabled: !status?.enabled })}
+            onClick={() => { void saveThis({ enabled: !status?.enabled }); }}
           >
             <BellRing /> {status?.enabled ? '暂停此通道' : '启用此通道'}
           </Button>

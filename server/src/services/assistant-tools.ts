@@ -40,6 +40,7 @@ import { deleteFragment, normalizeIso, reclassifyCapture, withTargets, type Frag
 import { syncTaskReminder, taskReminderMessage } from './reminders.js';
 import { actionableTitle, type FragType } from './classify.js';
 import { generateImage } from './image-gen.js';
+import { normalizeTags } from './tags.js';
 
 export type AssistantToolDefinition = {
   name: string;
@@ -213,6 +214,54 @@ export const assistantToolDefinitions: AssistantToolDefinition[] = [
     parameters: objectSchema({}),
   },
   {
+    name: 'workbench_create_project',
+    description: '创建一个工作台项目，并返回真实项目 ID。用户明确要求建立项目时调用；不要把创建项目说成已完成而不调用本工具。',
+    parameters: objectSchema({
+      name: { type: 'string', minLength: 1, maxLength: 200 },
+      description: { type: 'string', maxLength: 2000 },
+      domain: { type: 'string', enum: ['work', 'life'] },
+    }, ['name']),
+  },
+  {
+    name: 'workbench_update_project',
+    description: '修改已有项目的名称、说明、工作/生活域或状态。先查询项目确认 ID，不能凭名称猜 ID。',
+    parameters: objectSchema({
+      id: { type: 'integer' }, name: { type: 'string', minLength: 1, maxLength: 200 },
+      description: { type: 'string', maxLength: 2000 }, domain: { type: 'string', enum: ['work', 'life'] },
+      status: { type: 'string', enum: ['active', 'paused', 'archived', 'done'] },
+    }, ['id']),
+  },
+  {
+    name: 'workbench_delete_project',
+    description: '把已有项目移入回收站，项目下的清单保留。用户明确要求删除项目时调用，并说明可恢复。',
+    parameters: objectSchema({ id: { type: 'integer' } }, ['id']),
+  },
+  {
+    name: 'workbench_create_task',
+    description: '创建结构化清单，支持项目、详情、日期、截止时间、提醒、重复规则和优先级。已有同一轮草稿时不要重复创建。',
+    parameters: objectSchema({
+      title: { type: 'string', minLength: 1, maxLength: 2000 }, detail: { type: 'string', maxLength: 524288 },
+      notes: { type: 'string', maxLength: 10000 }, projectId: { type: 'integer', nullable: true },
+      plannedDate: { type: 'string', nullable: true }, dueAt: { type: 'string', nullable: true }, remindAt: { type: 'string', nullable: true },
+      repeatRule: { type: 'string' }, priority: { type: 'integer', minimum: 0, maximum: 2 },
+    }, ['title']),
+  },
+  {
+    name: 'workbench_update_task',
+    description: '更新任意已有清单的标题、详情、项目、状态、优先级、日期、截止时间、提醒或重复规则。',
+    parameters: objectSchema({
+      id: { type: 'integer' }, title: { type: 'string', minLength: 1, maxLength: 2000 }, detail: { type: 'string', maxLength: 524288 },
+      notes: { type: 'string', maxLength: 10000 }, projectId: { type: 'integer', nullable: true }, status: { type: 'string', enum: ['todo', 'doing', 'done'] },
+      priority: { type: 'integer', minimum: 0, maximum: 2 }, plannedDate: { type: 'string', nullable: true }, dueAt: { type: 'string', nullable: true },
+      remindAt: { type: 'string', nullable: true }, repeatRule: { type: 'string' },
+    }, ['id']),
+  },
+  {
+    name: 'workbench_delete_task',
+    description: '把已有清单移入回收站，并隐藏其联动提醒。用户明确要求删除时调用。',
+    parameters: objectSchema({ id: { type: 'integer' } }, ['id']),
+  },
+  {
     name: 'workbench_search_notes',
     description: '搜索工作台笔记；可按关键词或更新时间范围检索。需要从会议记录、复盘或知识笔记补充上下文时调用。',
     parameters: objectSchema({
@@ -223,12 +272,51 @@ export const assistantToolDefinitions: AssistantToolDefinition[] = [
     }),
   },
   {
+    name: 'workbench_read_note',
+    description: '读取已有随手记全文。先由搜索结果取得准确 ID。',
+    parameters: objectSchema({ id: { type: 'integer' } }, ['id']),
+  },
+  {
+    name: 'workbench_update_note',
+    description: '更新已有随手记的标题、正文、标签或置顶状态。',
+    parameters: objectSchema({
+      id: { type: 'integer' }, title: { type: 'string' }, content: { type: 'string' }, tags: { type: 'array', items: { type: 'string' } }, pinned: { type: 'boolean' },
+    }, ['id']),
+  },
+  {
+    name: 'workbench_delete_note',
+    description: '把已有随手记移入回收站。',
+    parameters: objectSchema({ id: { type: 'integer' } }, ['id']),
+  },
+  {
     name: 'workbench_list_reminders',
     description: '查询待触发或全部提醒。制定近期计划和跟进事项时调用。',
     parameters: objectSchema({
       scope: { type: 'string', enum: ['upcoming', 'all'] },
       limit: { type: 'integer', minimum: 1, maximum: 100 },
     }),
+  },
+  {
+    name: 'workbench_update_reminder',
+    description: '更新已有提醒的内容、触发时间、重复规则、通知渠道或完成状态。',
+    parameters: objectSchema({
+      id: { type: 'integer' }, message: { type: 'string', maxLength: 500 }, triggerAt: { type: 'string' }, repeatRule: { type: 'string' }, channel: { type: 'string' }, status: { type: 'string', enum: ['pending', 'done'] },
+    }, ['id']),
+  },
+  {
+    name: 'workbench_delete_reminder',
+    description: '把已有提醒移入回收站。',
+    parameters: objectSchema({ id: { type: 'integer' } }, ['id']),
+  },
+  {
+    name: 'workbench_list_trash',
+    description: '查询回收站中可恢复的项目、清单、随手记和提醒。',
+    parameters: objectSchema({}),
+  },
+  {
+    name: 'workbench_restore_trash',
+    description: '从回收站恢复一条项目、清单、随手记或提醒。必须使用真实 kind 和 ID。',
+    parameters: objectSchema({ kind: { type: 'string', enum: ['tasks', 'projects', 'fragments', 'reminders', 'notes'] }, id: { type: 'integer' } }, ['kind', 'id']),
   },
   {
     name: 'workbench_update_task_detail',
@@ -444,6 +532,32 @@ export const assistantToolDefinitions: AssistantToolDefinition[] = [
       id: { type: 'string', minLength: 1, description: 'Skill id，来自 workbench_search_library 的返回值' },
     }),
   },
+  {
+    name: 'workbench_import_knowledge_files',
+    description: '批量导入本地文件内容到知识库。传入路径和正文；单次最多 300 个文件、总内容不超过 8MB。',
+    parameters: objectSchema({ files: { type: 'array', minItems: 1, maxItems: 300, items: objectSchema({ path: { type: 'string' }, content: { type: 'string' } }, ['path', 'content']) } }, ['files']),
+  },
+  {
+    name: 'workbench_sync_knowledge_space',
+    description: '启动飞书或钉钉知识空间后台同步。飞书可传 wiki/drive/docs 范围，钉钉需传分享链接；返回真实同步任务状态。',
+    parameters: objectSchema({ provider: { type: 'string', enum: ['feishu', 'dingtalk'] }, spaceUrl: { type: 'string' }, mode: { type: 'string', enum: ['index', 'full'] }, scope: { type: 'object' } }, ['provider']),
+  },
+  { name: 'workbench_create_topic', description: '创建知识库主题。', parameters: objectSchema({ name: { type: 'string' }, summary: { type: 'string' }, scope: { type: 'string' }, focusQuestions: { type: 'array', items: { type: 'string' } } }, ['name']) },
+  { name: 'workbench_update_topic', description: '修改知识库主题定义。', parameters: objectSchema({ id: { type: 'integer' }, name: { type: 'string' }, summary: { type: 'string' }, scope: { type: 'string' }, focusQuestions: { type: 'array', items: { type: 'string' } }, manualNotes: { type: 'string' } }, ['id']) },
+  { name: 'workbench_add_topic_members', description: '把已有资料加入知识库主题。', parameters: objectSchema({ topicId: { type: 'integer' }, documentKeys: { type: 'array', items: { type: 'string' } } }, ['topicId', 'documentKeys']) },
+  { name: 'workbench_remove_topic_member', description: '从主题移除资料关系，不删除原资料。', parameters: objectSchema({ topicId: { type: 'integer' }, documentKey: { type: 'string' } }, ['topicId', 'documentKey']) },
+  { name: 'workbench_set_topic_member_override', description: '设置主题资料的纳入或排除决定。', parameters: objectSchema({ topicId: { type: 'integer' }, documentKey: { type: 'string' }, decision: { type: 'string', enum: ['include', 'exclude'] } }, ['topicId', 'documentKey', 'decision']) },
+  { name: 'workbench_generate_topic_brief', description: '生成主题简报，返回带资料覆盖和证据边界的真实成果。', parameters: objectSchema({ topicId: { type: 'integer' } }, ['topicId']) },
+  { name: 'workbench_list_document_versions', description: '读取资料当前版本和历史版本列表。', parameters: objectSchema({ sourceKey: { type: 'string' } }, ['sourceKey']) },
+  { name: 'workbench_export_knowledge', description: '导出知识库或指定主题的 JSON/Markdown 资产。返回可下载内容。', parameters: objectSchema({ format: { type: 'string', enum: ['json', 'markdown'] }, topicId: { type: 'integer' } }) },
+  { name: 'workbench_save_knowledge_output', description: '把已生成的知识简报保存为资料文档。', parameters: objectSchema({ outputId: { type: 'integer' }, saveKey: { type: 'string' }, overwriteManual: { type: 'boolean' } }, ['outputId', 'saveKey']) },
+  { name: 'workbench_create_prompt', description: '创建 AI 资源库提示词。', parameters: objectSchema({ title: { type: 'string' }, content: { type: 'string' }, description: { type: 'string' }, tags: { type: 'array', items: { type: 'string' } }, source: { type: 'string' } }) },
+  { name: 'workbench_update_prompt', description: '修改 AI 资源库提示词。', parameters: objectSchema({ id: { type: 'integer' }, title: { type: 'string' }, content: { type: 'string' }, description: { type: 'string' }, tags: { type: 'array', items: { type: 'string' } }, source: { type: 'string' } }, ['id']) },
+  { name: 'workbench_delete_prompt', description: '把提示词移入回收站。', parameters: objectSchema({ id: { type: 'integer' } }, ['id']) },
+  { name: 'workbench_rescan_skills', description: '重新扫描本机 Skill 目录。', parameters: objectSchema({}) },
+  { name: 'workbench_find_skill_duplicates', description: '扫描 Skill 的完全重复和可能重名重复。', parameters: objectSchema({}) },
+  { name: 'workbench_edit_skill', description: '编辑个人或 Claude Skill 的 SKILL.md；内置和插件 Skill 只读。', parameters: objectSchema({ id: { type: 'string' }, content: { type: 'string' } }, ['id', 'content']) },
+  { name: 'workbench_delete_skill', description: '删除可编辑 Skill 并移入 Skill 回收站。', parameters: objectSchema({ id: { type: 'string' } }, ['id']) },
 ];
 
 function localDateStr(d = new Date()): string {
@@ -606,6 +720,102 @@ function listProjects(): unknown {
   return { count: projects.length, projects };
 }
 
+function createProject(args: JsonObject): unknown {
+  const name = typeof args.name === 'string' ? args.name.trim() : '';
+  if (!name) throw new Error('项目名称不能为空');
+  const domain = args.domain === 'life' ? 'life' : 'work';
+  const description = typeof args.description === 'string' ? args.description.trim() : '';
+  const info = db.prepare('INSERT INTO projects (id, name, description, domain, color) VALUES (sync_id(), ?, ?, ?, NULL)').run(name, description, domain);
+  return db.prepare('SELECT * FROM projects WHERE id = ?').get(info.lastInsertRowid);
+}
+
+function updateProject(args: JsonObject): unknown {
+  const id = intArg(args.id, 0, 1, Number.MAX_SAFE_INTEGER);
+  const cur = db.prepare('SELECT * FROM projects WHERE id = ? AND deleted_at IS NULL').get(id) as Record<string, unknown> | undefined;
+  if (!cur) throw new Error(`项目 #${id} 不存在或已在回收站`);
+  const next = {
+    id, name: typeof args.name === 'string' ? args.name.trim() : cur.name,
+    description: typeof args.description === 'string' ? args.description : cur.description,
+    domain: args.domain === 'life' ? 'life' : args.domain === 'work' ? 'work' : cur.domain,
+    status: ['active', 'paused', 'archived', 'done'].includes(args.status as string) ? args.status : cur.status,
+    color: cur.color, updated_at: now(),
+  };
+  if (!String(next.name).trim()) throw new Error('项目名称不能为空');
+  db.prepare('UPDATE projects SET name=@name, description=@description, domain=@domain, status=@status, color=@color, updated_at=@updated_at WHERE id=@id').run(next);
+  return db.prepare('SELECT * FROM projects WHERE id = ?').get(id);
+}
+
+function deleteProject(args: JsonObject): unknown {
+  const id = intArg(args.id, 0, 1, Number.MAX_SAFE_INTEGER);
+  const info = db.prepare('UPDATE projects SET deleted_at = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL').run(now(), now(), id);
+  if (!info.changes) throw new Error(`项目 #${id} 不存在或已在回收站`);
+  return { ok: true, id, trashed: true, hint: '项目已进回收站，关联清单保留，30 天内可恢复。' };
+}
+
+function taskRowById(id: number): Record<string, unknown> {
+  const row = db.prepare(`SELECT t.*, p.name AS project_name, p.domain AS project_domain
+    FROM tasks t LEFT JOIN projects p ON p.id = t.project_id
+    WHERE t.id = ? AND t.deleted_at IS NULL`).get(id) as Record<string, unknown> | undefined;
+  if (!row) throw new Error(`清单 #${id} 不存在或已在回收站`);
+  return row;
+}
+
+function createTask(args: JsonObject): unknown {
+  const title = typeof args.title === 'string' ? args.title.trim() : '';
+  if (!title) throw new Error('清单标题不能为空');
+  const projectId = args.projectId == null ? null : intArg(args.projectId, 0, 1, Number.MAX_SAFE_INTEGER);
+  if (projectId != null && !db.prepare("SELECT id FROM projects WHERE id = ? AND deleted_at IS NULL AND status = 'active'").get(projectId)) throw new Error(`项目 #${projectId} 不存在或未在进行中`);
+  const nextSort = (db.prepare('SELECT COALESCE(MAX(sort_order), -1) AS v FROM tasks').get() as { v: number }).v + 1;
+  const plannedDate = args.plannedDate === null ? null : dateArg(args.plannedDate) ?? null;
+  const remindAt = args.remindAt === null ? null : localDateTimeArg(args.remindAt) ?? null;
+  const info = db.prepare(`INSERT INTO tasks (id, title, notes, project_id, priority, due_at, planned_date, remind_at, repeat_rule, detail, sort_order)
+    VALUES (sync_id(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+    title, typeof args.notes === 'string' ? args.notes : '', projectId, intArg(args.priority, 0, 0, 2),
+    typeof args.dueAt === 'string' ? args.dueAt : null, plannedDate, remindAt, typeof args.repeatRule === 'string' ? args.repeatRule : 'none',
+    typeof args.detail === 'string' ? args.detail : '', nextSort,
+  );
+  const id = Number(info.lastInsertRowid);
+  if (remindAt) syncTaskReminder(id, title, remindAt);
+  return taskRowById(id);
+}
+
+function updateTask(args: JsonObject): unknown {
+  const id = intArg(args.id, 0, 1, Number.MAX_SAFE_INTEGER);
+  const cur = taskRowById(id);
+  const nextStatus = ['todo', 'doing', 'done'].includes(args.status as string) ? args.status : cur.status;
+  const projectId = args.projectId === null ? null : args.projectId === undefined ? cur.project_id : intArg(args.projectId, 0, 1, Number.MAX_SAFE_INTEGER);
+  if (projectId != null && !db.prepare("SELECT id FROM projects WHERE id = ? AND deleted_at IS NULL AND status = 'active'").get(projectId)) throw new Error(`项目 #${projectId} 不存在或未在进行中`);
+  const plannedDate = args.plannedDate === undefined ? cur.planned_date : args.plannedDate === null ? null : dateArg(args.plannedDate) ?? null;
+  const remindAt = args.remindAt === undefined ? cur.remind_at : args.remindAt === null ? null : localDateTimeArg(args.remindAt) ?? null;
+  const next = {
+    id, title: typeof args.title === 'string' ? args.title.trim() : cur.title, notes: typeof args.notes === 'string' ? args.notes : cur.notes,
+    project_id: projectId, status: nextStatus, priority: args.priority === undefined ? cur.priority : intArg(args.priority, 0, 0, 2),
+    due_at: args.dueAt === undefined ? cur.due_at : args.dueAt, planned_date: plannedDate, remind_at: remindAt,
+    repeat_rule: typeof args.repeatRule === 'string' ? args.repeatRule : cur.repeat_rule,
+    detail: typeof args.detail === 'string' ? args.detail : cur.detail, completed_at: cur.completed_at, updated_at: now(),
+  };
+  if (!String(next.title).trim()) throw new Error('清单标题不能为空');
+  if (nextStatus === 'done' && cur.status !== 'done') next.completed_at = now();
+  if (nextStatus !== 'done' && cur.status === 'done') next.completed_at = null;
+  db.prepare(`UPDATE tasks SET title=@title, notes=@notes, project_id=@project_id, status=@status, priority=@priority,
+    due_at=@due_at, planned_date=@planned_date, remind_at=@remind_at, repeat_rule=@repeat_rule, detail=@detail,
+    completed_at=@completed_at, updated_at=@updated_at WHERE id=@id`).run(next);
+  if (nextStatus === 'done') db.prepare("UPDATE reminders SET status = 'done' WHERE linked_task_id = ? AND status IN ('pending', 'fired')").run(id);
+  else if (args.remindAt !== undefined) syncTaskReminder(id, String(next.title), remindAt as string | null);
+  return taskRowById(id);
+}
+
+function deleteTask(args: JsonObject): unknown {
+  const id = intArg(args.id, 0, 1, Number.MAX_SAFE_INTEGER);
+  taskRowById(id);
+  const deletedAt = now();
+  db.transaction(() => {
+    db.prepare('UPDATE tasks SET deleted_at = ?, updated_at = ? WHERE id = ?').run(deletedAt, deletedAt, id);
+    db.prepare('UPDATE reminders SET deleted_at = ? WHERE linked_task_id = ? AND deleted_at IS NULL').run(deletedAt, id);
+  })();
+  return { ok: true, id, trashed: true, hint: '清单已进回收站，30 天内可恢复。' };
+}
+
 function searchNotes(args: JsonObject): unknown {
   const clauses = ['deleted_at IS NULL'];
   const params: unknown[] = [];
@@ -627,6 +837,34 @@ function searchNotes(args: JsonObject): unknown {
   return { count: notes.length, notes };
 }
 
+function readNote(args: JsonObject): unknown {
+  const id = intArg(args.id, 0, 1, Number.MAX_SAFE_INTEGER);
+  const row = db.prepare('SELECT * FROM notes WHERE id = ? AND deleted_at IS NULL').get(id) as Record<string, unknown> | undefined;
+  if (!row) throw new Error(`随手记 #${id} 不存在或已在回收站`);
+  let tags: string[] = [];
+  try { tags = JSON.parse(String(row.tags ?? '[]')); } catch { /* 历史脏标签按空数组返回 */ }
+  return { ...row, tags: Array.isArray(tags) ? tags : [] };
+}
+
+function updateNote(args: JsonObject): unknown {
+  const current = readNote(args) as Record<string, unknown>;
+  const id = Number(current.id);
+  let currentTags: string[] = Array.isArray(current.tags) ? current.tags as string[] : [];
+  const nextTags = Array.isArray(args.tags) ? normalizeTags(args.tags) : currentTags;
+  db.prepare(`UPDATE notes SET title=?, content=?, tags=?, pinned=?, updated_at=? WHERE id=?`).run(
+    args.title === undefined ? current.title : String(args.title), args.content === undefined ? current.content : String(args.content),
+    JSON.stringify(nextTags), args.pinned === undefined ? Number(current.pinned ?? 0) : args.pinned ? 1 : 0, now(), id,
+  );
+  return readNote({ id });
+}
+
+function deleteNote(args: JsonObject): unknown {
+  const id = intArg(args.id, 0, 1, Number.MAX_SAFE_INTEGER);
+  readNote({ id });
+  db.prepare('UPDATE notes SET deleted_at = ?, updated_at = ? WHERE id = ?').run(now(), now(), id);
+  return { ok: true, id, trashed: true, hint: '随手记已进回收站，30 天内可恢复。' };
+}
+
 function listReminders(args: JsonObject): unknown {
   const scope = args.scope === 'all' ? 'all' : 'upcoming';
   const limit = intArg(args.limit, 30, 1, 100);
@@ -634,6 +872,53 @@ function listReminders(args: JsonObject): unknown {
     ? db.prepare('SELECT id, message, trigger_at, repeat_rule, status, linked_task_id FROM reminders WHERE deleted_at IS NULL ORDER BY trigger_at DESC LIMIT ?').all(limit)
     : db.prepare("SELECT id, message, trigger_at, repeat_rule, status, linked_task_id FROM reminders WHERE deleted_at IS NULL AND status='pending' ORDER BY trigger_at ASC LIMIT ?").all(limit);
   return { scope, count: reminders.length, reminders };
+}
+
+function updateReminder(args: JsonObject): unknown {
+  const id = intArg(args.id, 0, 1, Number.MAX_SAFE_INTEGER);
+  const cur = db.prepare('SELECT * FROM reminders WHERE id = ? AND deleted_at IS NULL').get(id) as Record<string, unknown> | undefined;
+  if (!cur) throw new Error(`提醒 #${id} 不存在或已在回收站`);
+  const next = {
+    id, message: args.message === undefined ? cur.message : String(args.message).trim(),
+    trigger_at: args.triggerAt === undefined ? cur.trigger_at : String(args.triggerAt),
+    repeat_rule: args.repeatRule === undefined ? cur.repeat_rule : String(args.repeatRule),
+    channel: args.channel === undefined ? cur.channel : String(args.channel),
+    status: args.status === 'done' ? 'done' : args.status === 'pending' ? 'pending' : cur.status,
+  };
+  if (!String(next.message).trim()) throw new Error('提醒内容不能为空');
+  db.prepare('UPDATE reminders SET message=?, trigger_at=?, repeat_rule=?, channel=?, status=? WHERE id=?').run(next.message, next.trigger_at, next.repeat_rule, next.channel, next.status, id);
+  return db.prepare('SELECT id, message, trigger_at, repeat_rule, status, channel, linked_task_id FROM reminders WHERE id = ?').get(id);
+}
+
+function deleteReminder(args: JsonObject): unknown {
+  const id = intArg(args.id, 0, 1, Number.MAX_SAFE_INTEGER);
+  const info = db.prepare('UPDATE reminders SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL').run(now(), id);
+  if (!info.changes) throw new Error(`提醒 #${id} 不存在或已在回收站`);
+  return { ok: true, id, trashed: true, hint: '提醒已进回收站，30 天内可恢复。' };
+}
+
+function listTrash(): unknown {
+  const items = [
+    ...db.prepare("SELECT 'projects' AS kind, id, name AS title, deleted_at FROM projects WHERE deleted_at IS NOT NULL").all(),
+    ...db.prepare("SELECT 'tasks' AS kind, id, title, deleted_at FROM tasks WHERE deleted_at IS NOT NULL").all(),
+    ...db.prepare("SELECT 'notes' AS kind, id, title, deleted_at FROM notes WHERE deleted_at IS NOT NULL").all(),
+    ...db.prepare("SELECT 'reminders' AS kind, id, message AS title, deleted_at FROM reminders WHERE deleted_at IS NOT NULL").all(),
+    ...db.prepare("SELECT 'fragments' AS kind, id, content AS title, deleted_at FROM fragments WHERE deleted_at IS NOT NULL").all(),
+  ] as Array<{ kind: string; id: number; title: string; deleted_at: string }>;
+  items.sort((a, b) => b.deleted_at.localeCompare(a.deleted_at));
+  return { retainDays: 30, count: items.length, items: items.slice(0, 200).map((item) => ({ kind: item.kind, id: item.id, title: String(item.title).slice(0, 200), deletedAt: item.deleted_at })) };
+}
+
+function restoreTrash(args: JsonObject): unknown {
+  const kind = typeof args.kind === 'string' ? args.kind : '';
+  const id = intArg(args.id, 0, 1, Number.MAX_SAFE_INTEGER);
+  const tables: Record<string, string> = { projects: 'projects', tasks: 'tasks', notes: 'notes', reminders: 'reminders', fragments: 'fragments' };
+  const table = tables[kind];
+  if (!table) throw new Error('只支持恢复项目、清单、随手记和提醒');
+  const info = db.prepare(`UPDATE ${table} SET deleted_at = NULL WHERE id = ? AND deleted_at IS NOT NULL`).run(id);
+  if (!info.changes) throw new Error(`回收站中没有 ${kind} #${id}`);
+  if (kind === 'tasks') db.prepare('UPDATE reminders SET deleted_at = NULL WHERE linked_task_id = ? AND deleted_at IS NOT NULL').run(id);
+  return { ok: true, kind, id, restored: true };
 }
 
 type DetailTask = {
@@ -1094,8 +1379,21 @@ export async function executeAssistantTool(name: string, args: JsonObject): Prom
     case 'workbench_list_tasks': return listTasks(args);
     case 'workbench_list_events': return listEvents(args);
     case 'workbench_list_projects': return listProjects();
+    case 'workbench_create_project': return createProject(args);
+    case 'workbench_update_project': return updateProject(args);
+    case 'workbench_delete_project': return deleteProject(args);
+    case 'workbench_create_task': return createTask(args);
+    case 'workbench_update_task': return updateTask(args);
+    case 'workbench_delete_task': return deleteTask(args);
     case 'workbench_search_notes': return searchNotes(args);
+    case 'workbench_read_note': return readNote(args);
+    case 'workbench_update_note': return updateNote(args);
+    case 'workbench_delete_note': return deleteNote(args);
     case 'workbench_list_reminders': return listReminders(args);
+    case 'workbench_update_reminder': return updateReminder(args);
+    case 'workbench_delete_reminder': return deleteReminder(args);
+    case 'workbench_list_trash': return listTrash();
+    case 'workbench_restore_trash': return restoreTrash(args);
     case 'workbench_update_task_detail': return updateTaskDetail(args);
     case 'workbench_recent_captures': return recentCaptures(args);
     case 'workbench_revise_capture': return reviseCapture(args);
